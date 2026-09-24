@@ -2,7 +2,22 @@
 
 Experimental VS Code extension for pi. Private, not published.
 
-Phase 1 spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace folder and writes the raw event stream to the `Pi` output channel.
+Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace folder and shows a chat panel in the Pi activity bar view. The raw event stream is also written to the `Pi` output channel.
+
+## Chat panel
+
+- Enter sends, Shift+Enter inserts a new line. While pi is working, Send becomes Steer and queues a steering message.
+- Assistant text streams in as plain text. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
+- Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
+- pi starts on the first message. Each start begins a new session, so the transcript is cleared.
+
+Code layout:
+
+| File | Role |
+|---|---|
+| `src/chat-state.ts` | Pure reducer from pi RPC events to transcript items, plus the diff sent to the webview |
+| `src/chat-view.ts` | Webview view provider; keeps the transcript and replays it when the webview reloads |
+| `src/webview/main.ts` | Webview renderer (plain DOM, no framework), typechecked by `tsconfig.webview.json` |
 
 ## Commands
 
@@ -29,14 +44,15 @@ npm --prefix packages/vscode run build
 code --extensionDevelopmentPath="$PWD/packages/vscode" /path/to/project
 ```
 
-Test that the source launcher starts pi in RPC mode:
+Run the tests (source launcher and chat reducer against the faux provider):
 
 ```bash
 cd packages/vscode
-node ../../node_modules/vitest/dist/cli.js --run test/pi-launch.test.ts
+node ../../node_modules/vitest/dist/cli.js --run
 ```
 
 ## Known limitations
 
 - Extension UI dialogs (`extension_ui_request`) are only logged. A pi extension that waits on a dialog without a timeout blocks until pi is stopped.
 - If the pi process exits unexpectedly, run `Pi: Stop` and then `Pi: Start`.
+- Markdown is not rendered yet.

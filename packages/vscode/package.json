@@ -12,6 +12,24 @@
 		"vscode": "^1.100.0"
 	},
 	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "pi",
+					"title": "Pi",
+					"icon": "media/pi.svg"
+				}
+			]
+		},
+		"views": {
+			"pi": [
+				{
+					"type": "webview",
+					"id": "pi.chat",
+					"name": "Chat"
+				}
+			]
+		},
 		"commands": [
 			{
 				"command": "pi.start",
@@ -60,7 +78,7 @@
 	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --sourcemap --outfile=dist/extension.cjs",
+		"build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --sourcemap --outfile=dist/extension.cjs && esbuild src/webview/main.ts src/webview/style.css --bundle --platform=browser --format=iife --target=es2022 --sourcemap --outdir=dist/webview",
 		"test": "vitest --run"
 	},
 	"devDependencies": {
