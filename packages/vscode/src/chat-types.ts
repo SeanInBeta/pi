@@ -48,6 +48,8 @@ export type ChatItem =
 			tools: Record<string, ToolRun>;
 			streaming: boolean;
 			error?: string;
+			/** Last assistant message of a finished run: shows the done marker and copy button. */
+			done?: boolean;
 	  }
 	| { kind: "error"; text: string };
 
@@ -93,10 +95,21 @@ export type PanelCommand =
 	| "attachFile"
 	| "attachProblems";
 
+/** A session tab in the panel header. */
+export interface SessionTab {
+	path: string;
+	title: string;
+	active: boolean;
+}
+
 /** Session and model state shown in the panel header and composer. */
 export interface PanelMeta {
 	started: boolean;
 	sessionName?: string;
+	/** Sessions opened in this panel, oldest first. */
+	tabs: SessionTab[];
+	/** Thinking level when pi started, the target of the reset button. */
+	defaultThinkingLevel?: string;
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
 	/** Levels the current model supports. */
@@ -128,4 +141,5 @@ export type WebviewMessage =
 	| { type: "abort" }
 	| { type: "removeAttachment"; id: string }
 	| { type: "query"; id: number; query: MenuQuery; text?: string }
-	| { type: "command"; command: PanelCommand; arg?: string };
+	| { type: "command"; command: PanelCommand; arg?: string }
+	| { type: "copyText"; text: string };

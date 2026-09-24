@@ -157,18 +157,6 @@ button {
 	border-bottom: 1px solid var(--vscode-panel-border);
 }
 
-.title-button {
-	min-width: 0;
-	font-weight: 600;
-	color: var(--vscode-foreground);
-}
-
-#session-name {
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-}
-
 .rename {
 	flex: 1;
 	min-width: 0;
@@ -205,6 +193,53 @@ button {
 
 .menu[hidden] {
 	display: none;
+}
+
+/* Session tabs */
+
+.tabs {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	gap: 2px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.tabs[hidden] {
+	display: none;
+}
+
+.tab {
+	display: inline-flex;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: 4px;
+	min-width: 64px;
+	max-width: 160px;
+	padding: 4px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+}
+
+.tab:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.tab.active {
+	flex-shrink: 0;
+	max-width: 60%;
+	color: var(--vscode-foreground);
+	font-weight: 600;
+	background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground));
+}
+
+.tab-label {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 
 #header-menu {
@@ -562,4 +597,155 @@ button {
 .markdown hr {
 	border: none;
 	border-top: 1px solid var(--vscode-panel-border);
+}
+
+/* Thinking effort popover */
+
+#effort {
+	position: absolute;
+	bottom: 100%;
+	left: 0;
+	right: 0;
+	margin-bottom: 4px;
+	padding: 10px 12px 14px;
+}
+
+.effort-head {
+	display: flex;
+	align-items: center;
+}
+
+.effort-side {
+	width: 26px;
+	flex: none;
+}
+
+.effort-title {
+	display: inline-flex;
+	flex: 1;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	border: none;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font-size: 1.25em;
+	font-weight: 600;
+}
+
+.effort-title .icon {
+	color: var(--vscode-descriptionForeground);
+}
+
+.effort-model {
+	margin: 2px 0 12px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+}
+
+.effort-slider {
+	--fill: 0;
+	--knob: 30px;
+	position: relative;
+	height: var(--knob);
+	border-radius: calc(var(--knob) / 2);
+	background: linear-gradient(
+			to right,
+			var(--vscode-button-background) calc(var(--knob) / 2 + var(--fill) * (100% - var(--knob))),
+			transparent 0
+		),
+		var(--vscode-input-background);
+	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+
+.effort-slider[hidden],
+.effort-none[hidden] {
+	display: none;
+}
+
+.effort-dots {
+	position: absolute;
+	inset: 0 calc(var(--knob) / 2);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	pointer-events: none;
+}
+
+.effort-dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--vscode-descriptionForeground);
+	opacity: 0.6;
+	transform: translateX(-50%);
+}
+
+.effort-dot:first-child {
+	transform: none;
+	margin-left: -2.5px;
+}
+
+.effort-dot:last-child {
+	transform: none;
+	margin-right: -2.5px;
+}
+
+#effort-range {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	background: transparent;
+	appearance: none;
+	cursor: pointer;
+}
+
+#effort-range::-webkit-slider-runnable-track {
+	height: 100%;
+	background: transparent;
+}
+
+#effort-range::-webkit-slider-thumb {
+	width: var(--knob);
+	height: var(--knob);
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+	appearance: none;
+}
+
+#effort-range:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: calc(var(--knob) / 2);
+}
+
+.effort-none {
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* End of answer */
+
+.message-footer {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 6px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.done-label {
+	display: inline-flex;
+	padding: 4px;
+}
+
+.copy-button {
+	color: var(--vscode-descriptionForeground);
+}
+
+.copy-button:hover {
+	color: var(--vscode-foreground);
 }

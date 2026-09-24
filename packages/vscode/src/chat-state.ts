@@ -45,8 +45,19 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 			return { ...state, draft: [...state.draft, ...action.attachments] };
 		case "draft_remove":
 			return { ...state, draft: state.draft.filter((attachment) => !action.ids.includes(attachment.id)) };
-		case "load_messages":
-			return action.messages.reduce(loadMessage, { ...createChatState(), draft: state.draft, sent: state.sent });
+		case "load_messages": {
+			const loaded = action.messages.reduce(loadMessage, {
+				...createChatState(),
+				draft: state.draft,
+				sent: state.sent,
+			});
+			// Every assistant message followed by a user message (or the end) finished a run.
+			const items = loaded.items.map((item, index) => {
+				const next = loaded.items[index + 1];
+				return item.kind === "assistant" && (!next || next.kind === "user") ? { ...item, done: true } : item;
+			});
+			return { ...loaded, items };
+		}
 		case "prompt_sent":
 			return {
 				...state,
@@ -54,8 +65,10 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 			};
 		case "agent_start":
 			return { ...state, running: true };
-		case "agent_settled":
-			return state.running || state.status ? { ...state, running: false, status: undefined } : state;
+		case "agent_settled": {
+			const settled = state.running || state.status ? { ...state, running: false, status: undefined } : state;
+			return markRunDone(settled);
+		}
 		case "queue_update":
 			return { ...state, queued: action.steering.length + action.followUp.length };
 		case "message_start":
@@ -152,6 +165,16 @@ function startMessage(state: ChatState, message: AgentMessage): ChatState {
 	}
 	// Tool results arrive through tool_execution_* events; system and custom messages are not shown yet.
 	return state;
+}
+
+/** Mark the last assistant message of the run that just settled. */
+function markRunDone(state: ChatState): ChatState {
+	const index = state.items.length - 1;
+	const item = state.items[index];
+	if (item?.kind !== "assistant" || item.done) return state;
+	const items = state.items.slice();
+	items[index] = { ...item, done: true };
+	return { ...state, items };
 }
 
 function loadMessage(state: ChatState, message: AgentMessage): ChatState {

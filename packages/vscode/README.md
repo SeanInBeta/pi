@@ -6,9 +6,10 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 
 ## Chat panel
 
-- The panel header shows the session name (or its first message) with New Session and session menu buttons. Session and model choices open as menus inside the panel, not in VS Code's quick pick.
-- The composer has a `+` menu (attach selection, current file, problems, mention a file), a model chip (model and thinking level), and a round send button. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
-- `/` at the start of the input lists commands: the built-ins below, then pi's extension, prompt template and skill commands. `@` lists workspace files (fuzzy match, same matcher as pi's terminal UI) and inserts `@path`, like the terminal UI.
+- The panel header shows the sessions opened in this panel as tabs (up to 8, remembered per workspace, no close button). Click a tab to switch; the active tab opens the session menu. Session and model choices open inside the panel, not in VS Code's quick pick.
+- The composer has a `+` menu (attach selection, current file, problems, mention a file), a model chip, and a round send button. The model chip opens a Codex-style popover: the thinking level on a slider, the model name below it, a reset button (back to the level pi started with), and the level title opens the model list. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
+- A finished answer ends with a smile marker and a copy button.
+- `/` lists commands with fuzzy matching (`/awe` finds `/skill:awesome-review`). At the start of the input it lists the built-ins below and pi's extension, prompt template and skill commands; after a space in the middle of the text (`what is /`) it lists pi's commands and inserts the chosen one. `@` lists workspace files (fuzzy match, same matcher as pi's terminal UI) and inserts `@path`, like the terminal UI.
 - Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts on the first message. Each start begins a new session, so the transcript is cleared.
@@ -149,5 +150,6 @@ node ../../node_modules/vitest/dist/cli.js --run
 
 - `src/pi-extension/review-changes.ts` is loaded from the extension folder as TypeScript, which works for the source checkout; a published build will need to ship it.
 - A slash command sent while pi is working is queued as a steering message, not run as a command.
+- In RPC mode pi cannot show its project trust prompt, so project `.pi` extensions, skills and prompts load only with `--approve` in `pi.args`, a saved `/trust` decision, or `defaultProjectTrust: "always"`.
 - If the pi process exits unexpectedly, run `Pi: Stop` and then `Pi: Start`.
 - A reloaded session shows messages sent with attachments as their full prompt text, not as chips.

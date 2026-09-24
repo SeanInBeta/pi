@@ -14,11 +14,16 @@ export function sessionItems(sessions: readonly RpcSessionSummary[], currentPath
 	return [...sessions]
 		.sort((a, b) => b.modified.localeCompare(a.modified))
 		.map((session) => ({
-			label: session.name ?? firstLine(session.firstMessage) ?? "(no messages)",
+			label: sessionTitle(session) ?? "(no messages)",
 			detail: `${session.messageCount} messages · ${formatDate(session.modified)}`,
 			value: session.path,
 			current: session.path === currentPath,
 		}));
+}
+
+/** A session's name, or the first line of its first message. */
+export function sessionTitle(session: Pick<RpcSessionSummary, "name" | "firstMessage">): string | undefined {
+	return session.name ?? firstLine(session.firstMessage);
 }
 
 /** The current model first, then the others in pi's order. Values are `{ provider, id }` as JSON. */

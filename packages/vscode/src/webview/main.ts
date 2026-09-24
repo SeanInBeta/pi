@@ -113,7 +113,66 @@ function renderItem(item: ChatItem): HTMLElement {
 	});
 	if (item.streaming && item.blocks.every((block) => !block)) container.append(create("div", "muted", "..."));
 	if (item.error) container.append(create("div", "error", item.error));
+	if (item.done && !item.streaming) container.append(renderDoneFooter(item.blocks));
 	return container;
+}
+
+/** End-of-answer marker: a smile says pi has finished; the button copies the answer text. */
+function renderDoneFooter(blocks: (AssistantBlock | null)[]): HTMLElement {
+	const footer = create("div", "message-footer");
+	const done = svgIcon(ICON_PATHS.smile);
+	done.classList.add("done-icon");
+	const doneLabel = create("span", "done-label");
+	doneLabel.title = "pi finished";
+	doneLabel.append(done);
+	const text = blocks
+		.filter((block): block is Extract<AssistantBlock, { type: "text" }> => block?.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
+	footer.append(doneLabel);
+	if (text) {
+		const copy = create("button", "icon-button copy-button") as HTMLButtonElement;
+		copy.type = "button";
+		copy.title = "Copy";
+		copy.append(svgIcon(ICON_PATHS.copy));
+		copy.addEventListener("click", () => {
+			vscode.postMessage({ type: "copyText", text });
+			copy.replaceChildren(svgIcon(ICON_PATHS.check));
+			copy.title = "Copied";
+			setTimeout(() => {
+				copy.replaceChildren(svgIcon(ICON_PATHS.copy));
+				copy.title = "Copy";
+			}, 1500);
+		});
+		footer.append(copy);
+	}
+	return footer;
+}
+
+const ICON_PATHS = {
+	smile: [
+		"M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Z",
+		"M5.5 9.5c.6.9 1.5 1.4 2.5 1.4s1.9-.5 2.5-1.4",
+		"M6 6.5h0M10 6.5h0",
+	],
+	copy: [
+		"M5.5 5.5V3a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-2.5",
+		"M3 5.5h7.5V13a.5.5 0 0 1-.5.5H3.5A.5.5 0 0 1 3 13Z",
+	],
+	check: ["M3.5 8.5 6.5 11.5 12.5 4.5"],
+};
+
+function svgIcon(paths: string[]): SVGSVGElement {
+	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+	svg.setAttribute("class", "icon");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("aria-hidden", "true");
+	for (const d of paths) {
+		const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		path.setAttribute("d", d);
+		svg.append(path);
+	}
+	return svg;
 }
 
 function renderBlock(block: AssistantBlock, index: number, tools: Record<string, ToolRun>): HTMLElement {

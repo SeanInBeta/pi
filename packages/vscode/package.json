@@ -26,7 +26,7 @@
 				{
 					"type": "webview",
 					"id": "pi.chat",
-					"name": "Chat"
+					"name": "Pi"
 				}
 			]
 		},

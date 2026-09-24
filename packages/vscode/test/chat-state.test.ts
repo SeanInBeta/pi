@@ -81,7 +81,9 @@ describe("chat state", () => {
 		expect(Object.values(toolTurn?.kind === "assistant" ? toolTurn.tools : {})).toEqual([
 			{ status: "done", output: "echo:hi" },
 		]);
-		expect(finalTurn).toMatchObject({ kind: "assistant", blocks: [{ type: "text", text: "Done" }] });
+		expect(finalTurn).toMatchObject({ kind: "assistant", blocks: [{ type: "text", text: "Done" }], done: true });
+		// Only the last message of the run gets the done marker.
+		expect(toolTurn).not.toHaveProperty("done");
 		expect(webviewItems).toEqual(state.items);
 	});
 

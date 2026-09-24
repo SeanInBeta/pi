@@ -1,3 +1,4 @@
+import { fuzzyFilter } from "../../../tui/src/fuzzy.ts";
 import type {
 	Attachment,
 	MenuItem,
@@ -33,7 +34,7 @@ export class Controls {
 	private readonly builtins: BuiltinCommand[];
 	private readonly queries = new Map<number, (items: MenuItem[]) => void>();
 	private nextQuery = 0;
-	private meta: PanelMeta = { started: false, thinkingLevels: [] };
+	private meta: PanelMeta = { started: false, thinkingLevels: [], tabs: [] };
 	/** First user message, the title of an unnamed session. */
 	private fallbackTitle: string | undefined;
 	private running = false;
@@ -49,10 +50,11 @@ export class Controls {
 	private readonly sendButton = element<HTMLButtonElement>("send");
 	private readonly statusLine = element<HTMLElement>("status");
 	private readonly draftList = element<HTMLElement>("draft");
-	private readonly sessionTitle = element<HTMLButtonElement>("session-title");
-	private readonly sessionName = element<HTMLElement>("session-name");
+	private readonly tabs = element<HTMLElement>("tabs");
 	private readonly renameInput = element<HTMLInputElement>("rename");
 	private readonly modelLabel = element<HTMLElement>("model-label");
+	private readonly effort = element<HTMLElement>("effort");
+	private readonly effortRange = element<HTMLInputElement>("effort-range");
 
 	constructor(post: Post) {
 		this.post = post;
@@ -69,7 +71,7 @@ export class Controls {
 			{
 				name: "thinking",
 				description: "Set thinking level, or /thinking <level>",
-				run: (arg) => (arg ? this.command("setThinking", arg) : this.openModels()),
+				run: (arg) => (arg ? this.command("setThinking", arg) : this.openEffort()),
 			},
 			{ name: "fork", description: "Create a new fork from a previous user message", run: () => this.openForks() },
 			{ name: "clone", description: "Duplicate the current session", run: () => this.command("clone") },
@@ -90,9 +92,10 @@ export class Controls {
 
 	setMeta(meta: PanelMeta): void {
 		this.meta = meta;
-		this.updateTitle();
-		const thinking = meta.thinkingLevel && meta.thinkingLevel !== "off" ? ` · ${meta.thinkingLevel}` : "";
+		this.renderTabs();
+		const thinking = meta.thinkingLevel && meta.thinkingLevel !== "off" ? ` · ${capitalize(meta.thinkingLevel)}` : "";
 		this.modelLabel.textContent = meta.model ? `${meta.model.id}${thinking}` : meta.started ? "No model" : "Model";
+		if (!this.effort.hidden) this.renderEffort();
 	}
 
 	setFallbackTitle(title: string | undefined): void {
@@ -100,11 +103,32 @@ export class Controls {
 			?.split("\n")
 			.find((line) => line.trim())
 			?.trim();
-		this.updateTitle();
+		this.renderTabs();
 	}
 
-	private updateTitle(): void {
-		this.sessionName.textContent = this.meta.sessionName ?? this.fallbackTitle ?? "New session";
+	/** Browser-style tabs for the sessions opened in this panel; the active one opens the session menu. */
+	private renderTabs(): void {
+		const tabs = this.meta.tabs.length > 0 ? this.meta.tabs : [{ path: "", title: "New session", active: true }];
+		this.tabs.replaceChildren(
+			...tabs.map((tab) => {
+				const title = tab.active ? (this.meta.sessionName ?? this.fallbackTitle ?? tab.title) : tab.title;
+				const button = create("button", `tab${tab.active ? " active" : ""}`) as HTMLButtonElement;
+				button.type = "button";
+				button.title = tab.active ? `${title} (session menu)` : title;
+				button.setAttribute("role", "tab");
+				button.setAttribute("aria-selected", String(tab.active));
+				button.append(create("span", "tab-label", title));
+				if (tab.active) {
+					button.dataset.menuTrigger = "";
+					button.append(chevronIcon());
+					button.addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
+				} else {
+					button.addEventListener("click", () => this.command("switchSession", tab.path));
+				}
+				return button;
+			}),
+		);
+		this.tabs.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 	}
 
 	setActivity(running: boolean, status: string | undefined, queued: number): void {
@@ -147,7 +171,8 @@ export class Controls {
 
 	openMenu(menu: PanelMenu): void {
 		if (menu === "sessions") this.openSessions();
-		else if (menu === "models" || menu === "thinking") this.openModels();
+		else if (menu === "models") this.openModels();
+		else if (menu === "thinking") this.openEffort();
 		else if (menu === "forks") this.openForks();
 		else this.startRename();
 	}
@@ -187,8 +212,28 @@ export class Controls {
 
 		element("new-session").addEventListener("click", () => this.command("newSession"));
 		element("history").addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
-		this.sessionTitle.addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
-		element("model").addEventListener("click", () => this.toggle(this.composerMenu, () => this.openModels()));
+		element("model").addEventListener("click", () => (this.effort.hidden ? this.openEffort() : this.closeEffort()));
+		element("effort-title").addEventListener("click", () => {
+			this.closeEffort();
+			this.openModels();
+		});
+		element("effort-reset").addEventListener("click", () => {
+			const level = this.meta.defaultThinkingLevel;
+			if (level && level !== this.meta.thinkingLevel) this.command("setThinking", level);
+		});
+		// Preview while dragging, apply on release or keyboard change.
+		this.effortRange.addEventListener("input", () => this.renderEffort(Number(this.effortRange.value)));
+		this.effortRange.addEventListener("change", () => {
+			const level = this.meta.thinkingLevels[Number(this.effortRange.value)];
+			if (level && level !== this.meta.thinkingLevel) this.command("setThinking", level);
+		});
+		this.effort.addEventListener("keydown", (event) => {
+			if (event.key === "Escape") this.closeEffort();
+		});
+		document.addEventListener("mousedown", (event) => {
+			const target = event.target as HTMLElement;
+			if (!this.effort.hidden && !this.effort.contains(target) && !target.closest("#model")) this.closeEffort();
+		});
 		element("attach").addEventListener("click", () => this.toggle(this.composerMenu, () => this.openAttach()));
 
 		this.renameInput.addEventListener("keydown", (event) => {
@@ -223,12 +268,13 @@ export class Controls {
 		this.input.focus();
 	}
 
-	/** Open `/` or `@` suggestions for the text before the caret. */
+	/** Open `/` or `@` suggestions for the word before the caret. */
 	private updateInlineMenu(): void {
 		const before = this.input.value.slice(0, this.input.selectionStart);
-		const slash = /^\/(\S*)$/.exec(before);
+		const slash = /(?:^|\s)\/([^\s/]*)$/.exec(before);
 		if (slash) {
-			this.openCommands(slash[1] ?? "");
+			// Built-ins act on the whole input, so they are offered only at its start.
+			this.openCommands(slash[1] ?? "", before.startsWith("/"));
 			return;
 		}
 		const mention = /(?:^|\s)@([^\s@]*)$/.exec(before);
@@ -239,35 +285,50 @@ export class Controls {
 		if (this.composerMode === "commands" || this.composerMode === "files") this.composerMenu.close();
 	}
 
-	private openCommands(prefix: string): void {
-		const builtinItems: MenuItem[] = this.builtins.map((command) => ({
-			label: `/${command.name}`,
-			description: command.description,
-			value: `builtin:${command.name}`,
-		}));
-		const filter = (items: MenuItem[]) => items.filter((item) => item.label.slice(1).startsWith(prefix));
+	private openCommands(query: string, atStart: boolean): void {
+		const builtinItems: MenuItem[] = atStart
+			? this.builtins.map((command) => ({
+					label: `/${command.name}`,
+					description: command.description,
+					value: `builtin:${command.name}`,
+				}))
+			: [];
+		// Fuzzy, like pi's terminal UI: "/awe" finds "/skill:awe".
+		const filter = (items: MenuItem[]) => fuzzyFilter(items, query, (item) => item.label.slice(1));
 		const sections = () => [
 			{ items: filter(builtinItems) },
 			{ title: "pi commands", items: filter(this.piCommands ?? []) },
 		];
-		if (!this.piCommands) {
-			this.piCommands = [];
-			this.query("commands", "", (items) => {
-				this.piCommands = items.map((item) => ({ ...item, value: `pi:${item.value}` }));
-				if (this.composerMode === "commands") this.composerMenu.update(sections());
-			});
-		}
+		const show = () => {
+			const current = sections();
+			if (current.every((section) => section.items.length === 0) && this.piCommands !== undefined) {
+				if (this.composerMode === "commands") this.composerMenu.close();
+				return;
+			}
+			if (this.composerMode === "commands") this.composerMenu.update(current);
+			else this.openComposerMenu("commands", { sections: current, onSelect, emptyText: "Loading commands..." });
+		};
 		const onSelect = (item: MenuItem) => {
 			const [kind, name] = splitValue(item.value);
 			if (kind === "builtin") {
 				this.setInput("");
 				this.builtins.find((command) => command.name === name)?.run("");
 			} else {
-				this.setInput(`/${name} `);
+				this.replaceBeforeCaret(/\/[^\s/]*$/, `/${name} `);
 			}
 		};
-		if (this.composerMode === "commands") this.composerMenu.update(sections());
-		else this.openComposerMenu("commands", { sections: sections(), onSelect, emptyText: "No matching commands" });
+		if (!this.piCommands) {
+			this.query("commands", "", (items) => {
+				this.piCommands = items.map((item) => ({ ...item, value: `pi:${item.value}` }));
+				if (this.composerMode === "commands" || this.inlineSlashPending()) show();
+			});
+		}
+		show();
+	}
+
+	/** Whether the caret still follows a `/word`, so late command results should open the menu. */
+	private inlineSlashPending(): boolean {
+		return /(?:^|\s)\/[^\s/]*$/.test(this.input.value.slice(0, this.input.selectionStart));
 	}
 
 	private openFiles(query: string): void {
@@ -296,8 +357,12 @@ export class Controls {
 
 	/** Replace the `@partial` before the caret with `@path `. */
 	private insertMention(path: string): void {
+		this.replaceBeforeCaret(/@[^\s@]*$/, `@${path} `);
+	}
+
+	private replaceBeforeCaret(pattern: RegExp, replacement: string): void {
 		const caret = this.input.selectionStart;
-		const before = this.input.value.slice(0, caret).replace(/@[^\s@]*$/, `@${path} `);
+		const before = this.input.value.slice(0, caret).replace(pattern, replacement);
 		this.input.value = before + this.input.value.slice(caret);
 		this.input.setSelectionRange(before.length, before.length);
 		this.input.focus();
@@ -344,29 +409,56 @@ export class Controls {
 	}
 
 	private openModels(): void {
-		const thinking = (): MenuItem[] =>
-			this.meta.thinkingLevels.map((level) => ({
-				label: level,
-				value: `thinking:${level}`,
-				current: level === this.meta.thinkingLevel,
-			}));
+		this.closeEffort();
 		this.openComposerMenu("picker", {
 			sections: undefined,
 			searchable: true,
 			placeholder: "Search models",
 			emptyText: "No models. Log in to a provider with the pi CLI first.",
 			onSelect: (item) => {
-				const [kind, value] = splitValue(item.value);
-				this.command(kind === "model" ? "setModel" : "setThinking", value);
+				this.command("setModel", item.value);
 				this.input.focus();
 			},
 		});
-		this.query("models", "", (items) =>
-			this.composerMenu.update([
-				{ title: "Model", items: items.map((item) => ({ ...item, value: `model:${item.value}` })) },
-				{ title: "Thinking", items: thinking() },
-			]),
-		);
+		this.query("models", "", (items) => this.composerMenu.update([{ items }]));
+	}
+
+	/** Codex-style popover: thinking level on a slider, the model name below the level. */
+	private openEffort(): void {
+		this.composerMenu.close();
+		this.headerMenu.close();
+		this.effort.hidden = false;
+		this.renderEffort();
+		this.effortRange.focus();
+	}
+
+	private closeEffort(): void {
+		this.effort.hidden = true;
+	}
+
+	/** `preview` is a slider position while dragging; otherwise the current level is shown. */
+	private renderEffort(preview?: number): void {
+		const levels = this.meta.thinkingLevels;
+		const index = preview ?? Math.max(0, levels.indexOf(this.meta.thinkingLevel ?? ""));
+		const level = levels[index] ?? this.meta.thinkingLevel ?? "off";
+		element("effort-level").textContent = capitalize(level);
+		element("effort-model").textContent = this.meta.model
+			? `${this.meta.model.id} · ${this.meta.model.provider}`
+			: "No model selected";
+		const reset = element<HTMLButtonElement>("effort-reset");
+		reset.disabled = !this.meta.defaultThinkingLevel || this.meta.defaultThinkingLevel === this.meta.thinkingLevel;
+		const slidable = levels.length > 1;
+		element("effort-slider").hidden = !slidable;
+		element("effort-none").hidden = slidable;
+		if (!slidable) return;
+		this.effortRange.max = String(levels.length - 1);
+		this.effortRange.value = String(index);
+		this.effortRange.setAttribute("aria-valuetext", level);
+		element("effort-slider").style.setProperty("--fill", String(index / (levels.length - 1)));
+		const dots = element("effort-dots");
+		if (dots.childElementCount !== levels.length) {
+			dots.replaceChildren(...levels.map(() => create("span", "effort-dot")));
+		}
 	}
 
 	private openAttach(): void {
@@ -393,7 +485,7 @@ export class Controls {
 	private startRename(): void {
 		this.headerMenu.close();
 		this.renameInput.value = this.meta.sessionName ?? "";
-		this.sessionTitle.hidden = true;
+		this.tabs.hidden = true;
 		this.renameInput.hidden = false;
 		this.renameInput.focus();
 		this.renameInput.select();
@@ -401,7 +493,7 @@ export class Controls {
 
 	private finishRename(): void {
 		this.renameInput.hidden = true;
-		this.sessionTitle.hidden = false;
+		this.tabs.hidden = false;
 	}
 
 	private toggle(menu: Menu, open: () => void): void {
@@ -432,6 +524,21 @@ export class Controls {
 		this.input.style.height = "auto";
 		this.input.style.height = `${Math.min(this.input.scrollHeight, 240)}px`;
 	}
+}
+
+function capitalize(text: string): string {
+	return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function chevronIcon(): SVGSVGElement {
+	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+	svg.setAttribute("class", "icon small");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("aria-hidden", "true");
+	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+	path.setAttribute("d", "M4.5 6.5 8 10l3.5-3.5");
+	svg.append(path);
+	return svg;
 }
 
 /** Split a `kind:value` menu value at the first colon. */

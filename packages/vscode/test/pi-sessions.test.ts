@@ -51,6 +51,11 @@ describe("sessions through the source launcher", () => {
 			const state = reduceChat(createChatState(), { type: "load_messages", messages: await client.getMessages() });
 			expect(state.items.map((item) => item.kind)).toEqual(["user", "assistant", "assistant"]);
 			expect(state.items[0]).toEqual({ kind: "user", text: "first question" });
+			expect(state.items.map((item) => item.kind === "assistant" && item.done === true)).toEqual([
+				false,
+				false,
+				true,
+			]);
 			const toolTurn = state.items[1];
 			expect(toolTurn?.kind === "assistant" ? Object.values(toolTurn.tools).map((run) => run.status) : []).toEqual([
 				"done",

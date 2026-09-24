@@ -1,14 +1,18 @@
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
-import type { Attachment, MenuItem, MenuQuery, PanelCommand, PanelMenu, PanelMeta } from "./chat-types.ts";
+import type { RpcSessionSummary } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
+import type { Attachment, MenuItem, MenuQuery, PanelCommand, PanelMenu, PanelMeta, SessionTab } from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
 import { ExtensionUIBridge } from "./extension-ui.ts";
 import { ACCEPT, REJECT } from "./file-change.ts";
 import { createPiClient } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
-import { commandItems, fileItems, forkItems, modelItems, sessionItems } from "./quick-picks.ts";
+import { commandItems, fileItems, forkItems, modelItems, sessionItems, sessionTitle } from "./quick-picks.ts";
+
+const TABS_KEY = "pi.sessionTabs";
+const MAX_TABS = 8;
 
 type PiStatus = "stopped" | "starting" | "idle" | "working";
 
@@ -20,16 +24,23 @@ class PiController implements vscode.Disposable {
 	private readonly output = vscode.window.createOutputChannel("Pi");
 	private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
 	private readonly modelItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-	private meta: PanelMeta = { started: false, thinkingLevels: [] };
+	private meta: PanelMeta = { started: false, thinkingLevels: [], tabs: [] };
+	private readonly workspaceState: vscode.Memento;
+	/** Session files opened in this panel, oldest first, persisted per workspace. */
+	private tabPaths: string[];
 	private files: { at: number; paths: string[] } | undefined;
 	private client: RpcClient | undefined;
 	private starting: Promise<RpcClient> | undefined;
+	/** Panel actions and sends run one at a time, so a session change cannot clear a reply that already started. */
+	private queue: Promise<unknown> = Promise.resolve();
 	private status: PiStatus = "stopped";
 
-	constructor(extensionUri: vscode.Uri) {
+	constructor(extensionUri: vscode.Uri, workspaceState: vscode.Memento) {
 		this.extensionPath = extensionUri.fsPath;
+		this.workspaceState = workspaceState;
+		this.tabPaths = workspaceState.get<string[]>(TABS_KEY, []);
 		this.chat = new ChatViewProvider(extensionUri, {
-			submit: (text) => this.run(() => this.submit(text)),
+			submit: (text) => this.run(() => this.serial(() => this.submit(text))),
 			abort: () => this.run(() => this.abort()),
 			query: async (query, text) => {
 				try {
@@ -39,7 +50,7 @@ class PiController implements vscode.Disposable {
 					return [];
 				}
 			},
-			command: (command, arg) => this.run(() => this.command(command, arg)),
+			command: (command, arg) => this.run(() => this.serial(() => this.command(command, arg))),
 		});
 		this.ui = new ExtensionUIBridge({
 			respond: (response) => this.client?.sendExtensionUIResponse(response),
@@ -271,13 +282,45 @@ class PiController implements vscode.Disposable {
 	}
 
 	private async refreshState(client: RpcClient): Promise<void> {
-		const [state, thinkingLevels] = await Promise.all([client.getState(), client.getAvailableThinkingLevels()]);
+		const [state, thinkingLevels, sessions] = await Promise.all([
+			client.getState(),
+			client.getAvailableThinkingLevels(),
+			client.listSessions(),
+		]);
 		this.setMeta({
 			started: true,
 			sessionName: state.sessionName,
 			model: state.model ? { provider: state.model.provider, id: state.model.id } : undefined,
 			thinkingLevel: state.thinkingLevel,
 			thinkingLevels,
+			defaultThinkingLevel: this.meta.defaultThinkingLevel ?? state.thinkingLevel,
+			tabs: this.updateTabs(state.sessionFile, state.sessionName, sessions),
+		});
+	}
+
+	/**
+	 * Keep the current session in the tab list and drop tabs whose file is gone, such as a new
+	 * session left before its first message. The oldest inactive tabs go first past MAX_TABS.
+	 */
+	private updateTabs(
+		current: string | undefined,
+		currentName: string | undefined,
+		sessions: RpcSessionSummary[],
+	): SessionTab[] {
+		const saved = new Map(sessions.map((session) => [session.path, session]));
+		const paths = this.tabPaths.filter((path) => path === current || saved.has(path));
+		if (current && !paths.includes(current)) paths.push(current);
+		while (paths.length > MAX_TABS)
+			paths.splice(
+				paths.findIndex((path) => path !== current),
+				1,
+			);
+		this.tabPaths = paths;
+		void this.workspaceState.update(TABS_KEY, paths);
+		return paths.map((path) => {
+			const info = saved.get(path);
+			const name = path === current ? currentName : undefined;
+			return { path, title: name ?? (info && sessionTitle(info)) ?? "New session", active: path === current };
 		});
 	}
 
@@ -304,6 +347,12 @@ class PiController implements vscode.Disposable {
 
 	showLog(): void {
 		this.output.show();
+	}
+
+	private serial<T>(action: () => Promise<T>): Promise<T> {
+		const result = this.queue.then(action);
+		this.queue = result.catch(() => undefined);
+		return result;
 	}
 
 	/** Run a command handler and report failures instead of dropping them. */
@@ -362,6 +411,8 @@ class PiController implements vscode.Disposable {
 			if (event.type === "agent_start") this.setStatus("working");
 			if (event.type === "agent_settled") {
 				this.setStatus("idle");
+				// A new session gets its title from the first message.
+				void this.refreshState(client).catch((error: unknown) => this.report(error));
 				// Dialogs of the finished run (for example a review cut off by Abort) are already resolved by pi.
 				this.ui.cancelAll();
 			}
@@ -399,7 +450,7 @@ class PiController implements vscode.Disposable {
 let controller: PiController | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-	const pi = new PiController(context.extensionUri);
+	const pi = new PiController(context.extensionUri, context.workspaceState);
 	controller = pi;
 	context.subscriptions.push(
 		pi,
