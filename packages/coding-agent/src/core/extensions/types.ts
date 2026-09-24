@@ -110,6 +110,11 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/**
+	 * JSON data forwarded unchanged to RPC clients with select, confirm and input requests, so a client
+	 * can render a richer dialog (for example a diff). The terminal UI ignores it.
+	 */
+	metadata?: Record<string, unknown>;
 }
 
 /** Placement for extension widgets. */

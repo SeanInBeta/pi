@@ -169,6 +169,27 @@ Set the text in the input editor. Fire-and-forget.
 }
 ```
 
+### Dialog metadata
+
+`select`, `confirm`, and `input` requests include a `metadata` field when the extension passes `metadata` in the dialog options. It is extension-defined JSON that lets a client render a richer dialog; Pi forwards it unchanged and the terminal UI ignores it.
+
+```typescript
+await ctx.ui.select("Apply edit to src/a.ts?", ["Accept", "Reject"], {
+  metadata: { kind: "my-ext.file-change", path: "/work/src/a.ts", content: "..." },
+});
+```
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-10",
+  "method": "select",
+  "title": "Apply edit to src/a.ts?",
+  "options": ["Accept", "Reject"],
+  "metadata": {"kind": "my-ext.file-change", "path": "/work/src/a.ts", "content": "..."}
+}
+```
+
 ## Responses to Pi
 
 Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`). The `id` must match the request.
@@ -192,6 +213,10 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 ```json
 {"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}
 ```
+
+## RpcClient
+
+`RpcClient.onExtensionUIRequest(listener)` receives these requests (they are not delivered to `onEvent` listeners). Answer dialogs with `RpcClient.sendExtensionUIResponse(response)`.
 
 ## Example
 

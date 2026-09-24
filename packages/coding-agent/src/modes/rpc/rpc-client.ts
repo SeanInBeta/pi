@@ -13,7 +13,15 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSessionSummary, RpcSlashCommand } from "./rpc-types.ts";
+import type {
+	RpcCommand,
+	RpcExtensionUIRequest,
+	RpcExtensionUIResponse,
+	RpcResponse,
+	RpcSessionState,
+	RpcSessionSummary,
+	RpcSlashCommand,
+} from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -48,6 +56,7 @@ export interface ModelInfo {
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
+export type RpcExtensionUIListener = (request: RpcExtensionUIRequest) => void;
 
 // ============================================================================
 // RPC Client
@@ -57,6 +66,7 @@ export class RpcClient {
 	private process: ChildProcess | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	private extensionUIListeners: RpcExtensionUIListener[] = [];
 	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
 		new Map();
 	private requestId = 0;
@@ -177,6 +187,31 @@ export class RpcClient {
 				this.eventListeners.splice(index, 1);
 			}
 		};
+	}
+
+	/**
+	 * Subscribe to extension UI requests. Dialog requests (select, confirm, input, editor) wait for
+	 * sendExtensionUIResponse() with the same id; the others are fire-and-forget.
+	 */
+	onExtensionUIRequest(listener: RpcExtensionUIListener): () => void {
+		this.extensionUIListeners.push(listener);
+		return () => {
+			const index = this.extensionUIListeners.indexOf(listener);
+			if (index !== -1) {
+				this.extensionUIListeners.splice(index, 1);
+			}
+		};
+	}
+
+	/**
+	 * Answer a dialog extension UI request.
+	 */
+	sendExtensionUIResponse(response: RpcExtensionUIResponse): void {
+		const stdin = this.process?.stdin;
+		if (!stdin || stdin.destroyed || !stdin.writable) {
+			throw this.exitError ?? new Error("Client not started");
+		}
+		stdin.write(serializeJsonLine(response));
 	}
 
 	/**
@@ -530,6 +565,13 @@ export class RpcClient {
 				const pending = this.pendingRequests.get(data.id)!;
 				this.pendingRequests.delete(data.id);
 				pending.resolve(data as RpcResponse);
+				return;
+			}
+
+			if (data.type === "extension_ui_request") {
+				for (const listener of this.extensionUIListeners) {
+					listener(data as RpcExtensionUIRequest);
+				}
 				return;
 			}
 
