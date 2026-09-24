@@ -30,6 +30,11 @@ let frame = 0;
 
 window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
 	const message = event.data;
+	if (message.type === "setInput") {
+		input.value = message.text;
+		input.focus();
+		return;
+	}
 	if (message.type === "reset") {
 		cancelAnimationFrame(frame);
 		frame = 0;

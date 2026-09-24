@@ -47,7 +47,14 @@ const respond: FauxResponseFactory = (context) => {
 };
 
 export default function (pi: ExtensionAPI): void {
-	const faux = fauxProvider({ provider: "smoke", tokensPerSecond: 60 });
+	const faux = fauxProvider({
+		provider: "smoke",
+		tokensPerSecond: 60,
+		models: [
+			{ id: "faux-1", name: "Smoke (reasoning)", reasoning: true },
+			{ id: "faux-2", name: "Smoke (fast)" },
+		],
+	});
 	faux.setResponses(Array.from({ length: 1000 }, () => respond));
 	pi.registerProvider(faux.provider);
 }

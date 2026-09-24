@@ -66,6 +66,8 @@ export interface ChatState {
 /** Host to webview. `update` carries only items whose identity changed since the last message. */
 export type HostMessage =
 	| { type: "reset"; state: ChatState }
+	/** Replace the composer text, for example with the message a fork started from. */
+	| { type: "setInput"; text: string }
 	| {
 			type: "update";
 			length: number;

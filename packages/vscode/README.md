@@ -11,6 +11,23 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts on the first message. Each start begins a new session, so the transcript is cleared.
 
+## Sessions and models
+
+pi saves sessions as usual (disable with `"pi.args": ["--no-session"]`). The chat view title bar has New Session, Switch Session and Select Model buttons; the `...` menu adds Fork Session, Rename Session, Select Thinking Level, Stop and Show Log. All are also in the command palette under `Pi:`.
+
+| Command | Action |
+|---|---|
+| `Pi: New Session` | Start an empty session |
+| `Pi: Switch Session` | Pick a saved session of this folder (newest first) and load its transcript |
+| `Pi: Fork Session` | Pick an earlier user message; pi starts a new session from before it and the message returns to the composer for editing |
+| `Pi: Rename Session` | Set the session name, shown next to the view title |
+| `Pi: Select Model` | Pick from the models pi has credentials for |
+| `Pi: Select Thinking Level` | Pick from the levels the current model supports |
+
+The status bar shows the model and thinking level; clicking it opens Select Model. Session commands are refused while pi is working. When `pi.args` resumes a session (`--continue`, `--session`), its transcript loads on start.
+
+Saved sessions are listed through the `list_sessions` RPC command, which this branch adds to pi.
+
 ## Editor context
 
 Attach context from the editor, then type a message (or send the attachments alone):
@@ -44,6 +61,7 @@ Code layout:
 | `src/chat-view.ts` | Webview view provider; keeps the transcript and replays it when the webview reloads |
 | `src/editor-context.ts` | Builds attachments from selections, documents, and diagnostics |
 | `src/prompt-context.ts` | Formats attachments into the prompt text (pure, tested) |
+| `src/quick-picks.ts` | QuickPick items for sessions, models, forks and thinking levels (pure, tested) |
 | `src/webview/main.ts` | Webview renderer (plain DOM, no framework), typechecked by `tsconfig.webview.json` |
 | `src/webview/markdown.ts` | Markdown to DOM using only `marked`'s lexer; nodes are built with `textContent`, never `innerHTML` |
 
@@ -78,9 +96,9 @@ To try the extension without an API key, point pi at the scripted provider in `t
 "pi.args": ["--extension", "<repo>/packages/vscode/test/fixtures/smoke-provider.ts", "--provider", "smoke", "--model", "faux-1"]
 ```
 
-Every message then gets thinking, a reply that lists the attached context blocks, and a `bash ls` tool call.
+Every message then gets thinking, a reply that lists the attached context blocks, and a `bash ls` tool call, followed by a Markdown summary. The provider has two models: `faux-1` (reasoning) and `faux-2`.
 
-Run the tests (source launcher, prompt formatting, and chat reducer against the faux provider):
+Run the tests (source launcher, sessions against local pi, prompt formatting, quick picks, and chat reducer against the faux provider):
 
 ```bash
 cd packages/vscode
@@ -91,3 +109,4 @@ node ../../node_modules/vitest/dist/cli.js --run
 
 - Extension UI dialogs (`extension_ui_request`) are only logged. A pi extension that waits on a dialog without a timeout blocks until pi is stopped.
 - If the pi process exits unexpectedly, run `Pi: Stop` and then `Pi: Start`.
+- A reloaded session shows messages sent with attachments as their full prompt text, not as chips.

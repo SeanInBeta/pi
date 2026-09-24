@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
-import { type ChatAction, createChatState, diffChat, reduceChat } from "./chat-state.ts";
+import { type AgentMessage, type ChatAction, createChatState, diffChat, reduceChat } from "./chat-state.ts";
 import type { Attachment, HostMessage, WebviewMessage } from "./chat-types.ts";
 
 export interface ChatViewHandlers {
@@ -20,6 +20,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private readonly handlers: ChatViewHandlers;
 	private state = createChatState();
 	private view: vscode.WebviewView | undefined;
+	private description: string | undefined;
 
 	constructor(extensionUri: vscode.Uri, handlers: ChatViewHandlers) {
 		this.extensionUri = extensionUri;
@@ -41,6 +42,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				this.dispatch({ type: "draft_remove", ids: [message.id] });
 			}
 		});
+		view.description = this.description;
 		view.onDidDispose(() => {
 			if (this.view === view) this.view = undefined;
 		});
@@ -51,6 +53,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	reset(): void {
 		this.state = reduceChat(this.state, { type: "session_reset" });
 		this.post({ type: "reset", state: this.state });
+	}
+
+	/** Replace the transcript with a session's message history. */
+	load(messages: AgentMessage[]): void {
+		this.state = reduceChat(this.state, { type: "load_messages", messages });
+		this.post({ type: "reset", state: this.state });
+	}
+
+	setInput(text: string): void {
+		this.post({ type: "setInput", text });
+	}
+
+	/** Text next to the view title, used for the session name. */
+	setDescription(description: string | undefined): void {
+		this.description = description;
+		if (this.view) this.view.description = description;
 	}
 
 	/** Attachments waiting in the composer. */

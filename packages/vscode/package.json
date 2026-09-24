@@ -70,6 +70,40 @@
 				"command": "pi.addDiagnostics",
 				"title": "Add Problems to Pi Chat",
 				"category": "Pi"
+			},
+			{
+				"command": "pi.newSession",
+				"title": "New Session",
+				"category": "Pi",
+				"icon": "$(add)"
+			},
+			{
+				"command": "pi.switchSession",
+				"title": "Switch Session",
+				"category": "Pi",
+				"icon": "$(history)"
+			},
+			{
+				"command": "pi.forkSession",
+				"title": "Fork Session",
+				"category": "Pi",
+				"icon": "$(repo-forked)"
+			},
+			{
+				"command": "pi.renameSession",
+				"title": "Rename Session",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.selectModel",
+				"title": "Select Model",
+				"category": "Pi",
+				"icon": "$(sparkle)"
+			},
+			{
+				"command": "pi.selectThinkingLevel",
+				"title": "Select Thinking Level",
+				"category": "Pi"
 			}
 		],
 		"menus": {
@@ -93,6 +127,48 @@
 					"command": "pi.addFile",
 					"when": "!explorerResourceIsFolder",
 					"group": "pi@1"
+				}
+			],
+			"view/title": [
+				{
+					"command": "pi.newSession",
+					"when": "view == pi.chat",
+					"group": "navigation@1"
+				},
+				{
+					"command": "pi.switchSession",
+					"when": "view == pi.chat",
+					"group": "navigation@2"
+				},
+				{
+					"command": "pi.selectModel",
+					"when": "view == pi.chat",
+					"group": "navigation@3"
+				},
+				{
+					"command": "pi.forkSession",
+					"when": "view == pi.chat",
+					"group": "1_session@1"
+				},
+				{
+					"command": "pi.renameSession",
+					"when": "view == pi.chat",
+					"group": "1_session@2"
+				},
+				{
+					"command": "pi.selectThinkingLevel",
+					"when": "view == pi.chat",
+					"group": "2_model@1"
+				},
+				{
+					"command": "pi.stop",
+					"when": "view == pi.chat",
+					"group": "3_process@1"
+				},
+				{
+					"command": "pi.showLog",
+					"when": "view == pi.chat",
+					"group": "3_process@2"
 				}
 			]
 		},

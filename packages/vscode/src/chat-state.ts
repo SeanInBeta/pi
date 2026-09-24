@@ -18,9 +18,11 @@ export type ChatAction =
 	| { type: "session_reset" }
 	| { type: "draft_add"; attachments: Attachment[] }
 	| { type: "draft_remove"; ids: string[] }
-	| ({ type: "prompt_sent" } & SentPrompt);
+	| ({ type: "prompt_sent" } & SentPrompt)
+	/** Replace the transcript with a session's message history, for example after switching sessions. */
+	| { type: "load_messages"; messages: AgentMessage[] };
 
-type AgentMessage = Extract<JsonAgentSessionEvent, { type: "message_start" }>["message"];
+export type AgentMessage = Extract<JsonAgentSessionEvent, { type: "message_start" }>["message"];
 type AssistantMessageEvent = Extract<JsonAgentSessionEvent, { type: "message_update" }>["assistantMessageEvent"];
 type AssistantItem = Extract<ChatItem, { kind: "assistant" }>;
 
@@ -39,6 +41,8 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 			return { ...state, draft: [...state.draft, ...action.attachments] };
 		case "draft_remove":
 			return { ...state, draft: state.draft.filter((attachment) => !action.ids.includes(attachment.id)) };
+		case "load_messages":
+			return action.messages.reduce(loadMessage, { ...createChatState(), draft: state.draft, sent: state.sent });
 		case "prompt_sent":
 			return {
 				...state,
@@ -144,6 +148,25 @@ function startMessage(state: ChatState, message: AgentMessage): ChatState {
 	}
 	// Tool results arrive through tool_execution_* events; system and custom messages are not shown yet.
 	return state;
+}
+
+function loadMessage(state: ChatState, message: AgentMessage): ChatState {
+	if (message.role === "assistant") {
+		return appendItem(state, {
+			kind: "assistant",
+			blocks: message.content.map(toBlock),
+			tools: {},
+			streaming: false,
+			error: assistantError(message),
+		});
+	}
+	if (message.role === "toolResult") {
+		return updateTool(state, message.toolCallId, {
+			status: message.isError ? "error" : "done",
+			output: toolResultText(message),
+		});
+	}
+	return startMessage(state, message);
 }
 
 function updateLastAssistant(state: ChatState, update: (item: AssistantItem) => AssistantItem): ChatState {

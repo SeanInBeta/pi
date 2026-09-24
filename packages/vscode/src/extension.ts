@@ -5,6 +5,7 @@ import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
 import { createPiClient } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
+import { forkItems, modelItems, type PickItem, sessionItems, thinkingLevelItems } from "./quick-picks.ts";
 
 type PiStatus = "stopped" | "starting" | "idle" | "working";
 
@@ -14,6 +15,9 @@ class PiController implements vscode.Disposable {
 	private readonly extensionPath: string;
 	private readonly output = vscode.window.createOutputChannel("Pi");
 	private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+	private readonly modelItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+	private model: { provider: string; id: string } | undefined;
+	private thinkingLevel = "";
 	private client: RpcClient | undefined;
 	private starting: Promise<RpcClient> | undefined;
 	private status: PiStatus = "stopped";
@@ -27,6 +31,8 @@ class PiController implements vscode.Disposable {
 		this.statusItem.command = "pi.showLog";
 		this.setStatus("stopped");
 		this.statusItem.show();
+		this.modelItem.command = "pi.selectModel";
+		this.modelItem.tooltip = "Select pi model";
 	}
 
 	/** Start pi, or return the running client. Concurrent callers share one process. */
@@ -45,6 +51,7 @@ class PiController implements vscode.Disposable {
 		await client.stop();
 		this.output.appendLine("pi stopped");
 		this.setStatus("stopped");
+		this.modelItem.hide();
 		// A run cut off by stopping never emits agent_settled.
 		this.chat.dispatch({ type: "agent_settled" });
 	}
@@ -112,6 +119,106 @@ class PiController implements vscode.Disposable {
 		await this.client?.abort();
 	}
 
+	async newSession(): Promise<void> {
+		const client = await this.idleClient();
+		if ((await client.newSession()).cancelled) return;
+		this.chat.reset();
+		await this.refreshState(client);
+	}
+
+	async switchSession(): Promise<void> {
+		const client = await this.idleClient();
+		const [sessions, state] = await Promise.all([client.listSessions(), client.getState()]);
+		if (sessions.length === 0) {
+			void vscode.window.showInformationMessage("Pi: no saved sessions for this folder yet.");
+			return;
+		}
+		const pick = await this.pick(sessionItems(sessions, state.sessionFile), "Switch to a session");
+		if (!pick || pick.value === state.sessionFile) return;
+		if ((await client.switchSession(pick.value)).cancelled) return;
+		await this.reload(client);
+	}
+
+	/** Start a new session from before an earlier user message, and put that message back in the composer. */
+	async forkSession(): Promise<void> {
+		const client = await this.idleClient();
+		const messages = await client.getForkMessages();
+		if (messages.length === 0) {
+			void vscode.window.showInformationMessage("Pi: no messages to fork from yet.");
+			return;
+		}
+		const pick = await this.pick(forkItems(messages), "Fork from before this message");
+		if (!pick) return;
+		const result = await client.fork(pick.value);
+		if (result.cancelled) return;
+		await this.reload(client);
+		await this.focusChat();
+		this.chat.setInput(result.text);
+	}
+
+	async renameSession(): Promise<void> {
+		const client = await this.start();
+		const state = await client.getState();
+		const name = await vscode.window.showInputBox({ prompt: "Session name", value: state.sessionName ?? "" });
+		if (!name?.trim()) return;
+		await client.setSessionName(name);
+		await this.refreshState(client);
+	}
+
+	async selectModel(): Promise<void> {
+		const client = await this.start();
+		const models = await client.getAvailableModels();
+		if (models.length === 0) {
+			void vscode.window.showInformationMessage(
+				"Pi: no models available. Log in to a provider with the pi CLI first.",
+			);
+			return;
+		}
+		const pick = await this.pick(modelItems(models, this.model), "Select a model");
+		if (!pick) return;
+		await client.setModel(pick.value.provider, pick.value.id);
+		await this.refreshState(client);
+	}
+
+	async selectThinkingLevel(): Promise<void> {
+		const client = await this.start();
+		const [levels, state] = await Promise.all([client.getAvailableThinkingLevels(), client.getState()]);
+		const pick = await this.pick(thinkingLevelItems(levels, state.thinkingLevel), "Select a thinking level");
+		if (!pick) return;
+		await client.setThinkingLevel(pick.value);
+		await this.refreshState(client);
+	}
+
+	/** Session changes while a run streams would race with its events. */
+	private async idleClient(): Promise<RpcClient> {
+		const client = await this.start();
+		if (this.status === "working") throw new Error("pi is working. Abort the current run first.");
+		return client;
+	}
+
+	private pick<T>(items: PickItem<T>[], placeHolder: string): Thenable<PickItem<T> | undefined> {
+		return vscode.window.showQuickPick(items, { placeHolder, matchOnDescription: true, matchOnDetail: true });
+	}
+
+	/** Show the active session's history and settings after it changed underneath the transcript. */
+	private async reload(client: RpcClient): Promise<void> {
+		this.chat.load(await client.getMessages());
+		await this.refreshState(client);
+	}
+
+	private async refreshState(client: RpcClient): Promise<void> {
+		const state = await client.getState();
+		this.model = state.model ? { provider: state.model.provider, id: state.model.id } : undefined;
+		this.thinkingLevel = state.thinkingLevel;
+		this.chat.setDescription(state.sessionName);
+		this.updateModelItem();
+	}
+
+	private updateModelItem(): void {
+		this.modelItem.text = `$(sparkle) ${this.model?.id ?? "no model"}${this.thinkingLevel && this.thinkingLevel !== "off" ? ` · ${this.thinkingLevel}` : ""}`;
+		this.modelItem.show();
+	}
+
 	private async attach(attachments: Attachment[]): Promise<void> {
 		this.chat.dispatch({ type: "draft_add", attachments });
 		await this.focusChat();
@@ -140,6 +247,7 @@ class PiController implements vscode.Disposable {
 	/** The process is stopped by deactivate(), which VS Code awaits. */
 	dispose(): void {
 		this.statusItem.dispose();
+		this.modelItem.dispose();
 		this.output.dispose();
 	}
 
@@ -161,6 +269,11 @@ class PiController implements vscode.Disposable {
 			this.chat.dispatch(event);
 			if (event.type === "agent_start") this.setStatus("working");
 			if (event.type === "agent_settled") this.setStatus("idle");
+			if (event.type === "session_info_changed") this.chat.setDescription(event.name);
+			if (event.type === "thinking_level_changed") {
+				this.thinkingLevel = event.level;
+				this.updateModelItem();
+			}
 		});
 
 		this.setStatus("starting");
@@ -169,6 +282,9 @@ class PiController implements vscode.Disposable {
 			const state = await client.getState();
 			const model = state.model ? `${state.model.provider}/${state.model.id}` : "none";
 			this.output.appendLine(`pi started in ${cwd} (model: ${model})`);
+			// pi.args such as --continue or --session resume an existing session.
+			if (state.messageCount > 0) this.chat.load(await client.getMessages());
+			await this.refreshState(client);
 		} catch (error) {
 			await client.stop();
 			this.setStatus("stopped");
@@ -203,6 +319,12 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand("pi.addSelection", () => pi.run(() => pi.addSelection())),
 		vscode.commands.registerCommand("pi.addFile", (uri?: vscode.Uri) => pi.run(() => pi.addFile(uri))),
 		vscode.commands.registerCommand("pi.addDiagnostics", () => pi.run(() => pi.addDiagnostics())),
+		vscode.commands.registerCommand("pi.newSession", () => pi.run(() => pi.newSession())),
+		vscode.commands.registerCommand("pi.switchSession", () => pi.run(() => pi.switchSession())),
+		vscode.commands.registerCommand("pi.forkSession", () => pi.run(() => pi.forkSession())),
+		vscode.commands.registerCommand("pi.renameSession", () => pi.run(() => pi.renameSession())),
+		vscode.commands.registerCommand("pi.selectModel", () => pi.run(() => pi.selectModel())),
+		vscode.commands.registerCommand("pi.selectThinkingLevel", () => pi.run(() => pi.selectThinkingLevel())),
 	);
 }
 
