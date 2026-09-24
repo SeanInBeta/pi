@@ -1,6 +1,7 @@
 import type { AssistantBlock, Attachment, ChatItem, HostMessage, ToolRun, WebviewMessage } from "../chat-types.ts";
 import { Controls, element } from "./controls.ts";
 import { renderMarkdown } from "./markdown.ts";
+import { renderTokens } from "./tokens.ts";
 
 declare function acquireVsCodeApi(): { postMessage(message: WebviewMessage): void };
 
@@ -20,8 +21,6 @@ let rendered: HTMLElement[] = [];
 /** Items waiting for the next animation frame, so a burst of deltas renders once. */
 let pending = new Map<number, ChatItem>();
 let pendingLength = 0;
-/** Current transcript items, for the session title fallback. */
-const items: ChatItem[] = [];
 let frame = 0;
 
 window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
@@ -64,11 +63,7 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
 vscode.postMessage({ type: "ready" });
 
 function queueItems(changed: { index: number; item: ChatItem }[], length: number): void {
-	for (const { index, item } of changed) {
-		pending.set(index, item);
-		items[index] = item;
-	}
-	items.length = length;
+	for (const { index, item } of changed) pending.set(index, item);
 	pendingLength = length;
 	if (!frame) frame = requestAnimationFrame(flush);
 }
@@ -89,8 +84,6 @@ function flush(): void {
 	}
 	for (const extra of rendered.splice(pendingLength)) extra.remove();
 	pending.clear();
-	const firstUser = items.find((item) => item.kind === "user");
-	controls.setFallbackTitle(firstUser?.kind === "user" ? firstUser.text : undefined);
 	if (stickToBottom) transcript.scrollTop = transcript.scrollHeight;
 }
 
@@ -102,7 +95,11 @@ function renderItem(item: ChatItem): HTMLElement {
 			list.append(...item.attachments.map(renderAttachment));
 			container.append(list);
 		}
-		if (item.text) container.append(create("div", "text", item.text));
+		if (item.text) {
+			const text = create("div", "text");
+			renderTokens(text, item.text, controls.isCommand);
+			container.append(text);
+		}
 		return container;
 	}
 	if (item.kind === "error") return create("div", "message error", item.text);

@@ -8,13 +8,22 @@ const REVIEW_CONTEXT = "pi.reviewPending";
 
 type DialogRequest = Extract<RpcExtensionUIRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 
-export interface ExtensionUIHost {
+/** The chat tab a request came from. */
+export interface UITarget {
+	id: string;
+	/** Tab title, shown when a review comes from a tab other than the visible one. */
+	label(): string;
 	respond(response: RpcExtensionUIResponse): void;
 	/** Put text in the chat composer. */
 	setInput(text: string): void;
 	/** Show or clear a transient chat status such as a pending review. */
 	setStatus(status: string | undefined): void;
+}
+
+export interface ExtensionUIHost {
 	log(line: string): void;
+	/** Auto edit mode: file changes are accepted without showing a review. */
+	autoApprove(): boolean;
 }
 
 /**
@@ -27,7 +36,8 @@ export class ExtensionUIBridge implements vscode.Disposable {
 	private readonly statusItems = new Map<string, vscode.StatusBarItem>();
 	private readonly disposables: vscode.Disposable[];
 	private queue: Promise<void> = Promise.resolve();
-	private readonly open = new Set<vscode.CancellationTokenSource>();
+	/** Open dialogs and the tab each belongs to. */
+	private readonly open = new Map<vscode.CancellationTokenSource, string>();
 	private decide: ((choice: string | undefined) => void) | undefined;
 	private nextId = 0;
 
@@ -40,13 +50,18 @@ export class ExtensionUIBridge implements vscode.Disposable {
 		];
 	}
 
-	handle(request: RpcExtensionUIRequest): void {
+	handle(request: RpcExtensionUIRequest, target: UITarget): void {
 		switch (request.method) {
 			case "select":
 			case "confirm":
 			case "input":
 			case "editor":
-				this.queue = this.queue.then(() => this.runDialog(request));
+				if (request.method === "select" && isFileChangeMetadata(request.metadata) && this.host.autoApprove()) {
+					this.host.log(`auto edit: accepted ${request.metadata.tool} of ${request.metadata.path}`);
+					target.respond({ type: "extension_ui_response", id: request.id, value: ACCEPT });
+					return;
+				}
+				this.queue = this.queue.then(() => this.runDialog(request, target));
 				return;
 			case "notify": {
 				const show =
@@ -62,7 +77,7 @@ export class ExtensionUIBridge implements vscode.Disposable {
 				this.setStatusItem(request.statusKey, request.statusText);
 				return;
 			case "set_editor_text":
-				this.host.setInput(request.text);
+				target.setInput(request.text);
 				return;
 			case "setWidget":
 			case "setTitle":
@@ -77,33 +92,33 @@ export class ExtensionUIBridge implements vscode.Disposable {
 		this.decide?.(choice);
 	}
 
-	/** Dismiss open dialogs, for example when the run they belong to ended. pi has already resolved them. */
-	cancelAll(): void {
-		for (const source of this.open) source.cancel();
+	/** Dismiss a tab's open dialogs, for example when its run ended. pi has already resolved them. */
+	cancel(targetId: string): void {
+		for (const [source, owner] of this.open) if (owner === targetId) source.cancel();
 	}
 
 	dispose(): void {
-		this.cancelAll();
+		for (const source of this.open.keys()) source.cancel();
 		for (const item of this.statusItems.values()) item.dispose();
 		for (const disposable of this.disposables) disposable.dispose();
 	}
 
-	private async runDialog(request: DialogRequest): Promise<void> {
+	private async runDialog(request: DialogRequest, target: UITarget): Promise<void> {
 		const source = new vscode.CancellationTokenSource();
-		this.open.add(source);
+		this.open.set(source, target.id);
 		const timeout =
 			"timeout" in request && request.timeout ? setTimeout(() => source.cancel(), request.timeout) : undefined;
 		try {
-			const response = await this.showDialog(request, source.token);
+			const response = await this.showDialog(request, target, source.token);
 			// After a timeout or cancellation pi has already resolved the dialog itself.
 			if (!source.token.isCancellationRequested)
-				this.host.respond({ type: "extension_ui_response", id: request.id, ...response });
+				target.respond({ type: "extension_ui_response", id: request.id, ...response });
 		} catch (error) {
 			this.host.log(
 				`extension UI ${request.method} failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			if (!source.token.isCancellationRequested) {
-				this.host.respond({ type: "extension_ui_response", id: request.id, cancelled: true });
+				target.respond({ type: "extension_ui_response", id: request.id, cancelled: true });
 			}
 		} finally {
 			clearTimeout(timeout);
@@ -114,12 +129,13 @@ export class ExtensionUIBridge implements vscode.Disposable {
 
 	private async showDialog(
 		request: DialogRequest,
+		target: UITarget,
 		token: vscode.CancellationToken,
 	): Promise<{ value: string } | { confirmed: boolean } | { cancelled: true }> {
 		switch (request.method) {
 			case "select": {
 				const value = isFileChangeMetadata(request.metadata)
-					? await this.reviewChange(request.metadata, token)
+					? await this.reviewChange(request.metadata, target, token)
 					: await vscode.window.showQuickPick(
 							request.options,
 							{ title: request.title, ignoreFocusOut: true },
@@ -151,27 +167,26 @@ export class ExtensionUIBridge implements vscode.Disposable {
 	/** Show pi's proposed content against the file on disk and wait for Accept or Reject. */
 	private async reviewChange(
 		change: FileChangeMetadata,
+		target: UITarget,
 		token: vscode.CancellationToken,
 	): Promise<string | undefined> {
 		const id = String(++this.nextId);
 		this.proposed.set(id, change.content);
-		const target = vscode.Uri.file(change.path);
+		const file = vscode.Uri.file(change.path);
 		const proposed = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: change.path, query: id });
-		const exists = await vscode.workspace.fs.stat(target).then(
+		const exists = await vscode.workspace.fs.stat(file).then(
 			() => true,
 			() => false,
 		);
-		const original = exists
-			? target
-			: vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: change.path, query: "empty" });
-		const label = vscode.workspace.asRelativePath(target, false);
+		const original = exists ? file : vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: change.path, query: "empty" });
+		const label = vscode.workspace.asRelativePath(file, false);
 
 		const decision = new Promise<string | undefined>((resolve) => {
 			this.decide = resolve;
 			token.onCancellationRequested(() => resolve(undefined));
 		});
 		try {
-			this.host.setStatus(`Review ${change.tool} of ${label}`);
+			target.setStatus(`Review ${change.tool} of ${label}`);
 			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, true);
 			await vscode.commands.executeCommand(
 				"vscode.diff",
@@ -182,7 +197,7 @@ export class ExtensionUIBridge implements vscode.Disposable {
 			);
 			void vscode.window
 				.showInformationMessage(
-					`pi wants to ${change.tool} ${label}.`,
+					`pi (${target.label()}) wants to ${change.tool} ${label}.`,
 					{ detail: "Review the diff." },
 					ACCEPT,
 					REJECT,
@@ -194,7 +209,7 @@ export class ExtensionUIBridge implements vscode.Disposable {
 		} finally {
 			this.decide = undefined;
 			this.proposed.delete(id);
-			this.host.setStatus(undefined);
+			target.setStatus(undefined);
 			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, false);
 			await closeDiff(proposed);
 		}

@@ -9,6 +9,7 @@ import type {
 	WebviewMessage,
 } from "../chat-types.ts";
 import { Menu, type MenuOptions } from "./menu.ts";
+import { renderTokens } from "./tokens.ts";
 
 type Post = (message: WebviewMessage) => void;
 type ComposerMode = "commands" | "files" | "picker";
@@ -34,9 +35,7 @@ export class Controls {
 	private readonly builtins: BuiltinCommand[];
 	private readonly queries = new Map<number, (items: MenuItem[]) => void>();
 	private nextQuery = 0;
-	private meta: PanelMeta = { started: false, thinkingLevels: [], tabs: [] };
-	/** First user message, the title of an unnamed session. */
-	private fallbackTitle: string | undefined;
+	private meta: PanelMeta = { started: false, thinkingLevels: [], tabs: [], approvalMode: "ask" };
 	private running = false;
 	private draft: Attachment[] = [];
 	/** pi's own slash commands, fetched once per `/` menu. */
@@ -53,6 +52,8 @@ export class Controls {
 	private readonly tabs = element<HTMLElement>("tabs");
 	private readonly renameInput = element<HTMLInputElement>("rename");
 	private readonly modelLabel = element<HTMLElement>("model-label");
+	private readonly approvalLabel = element<HTMLElement>("approval-label");
+	private readonly highlight = element<HTMLElement>("input-highlight");
 	private readonly effort = element<HTMLElement>("effort");
 	private readonly effortRange = element<HTMLInputElement>("effort-range");
 
@@ -90,42 +91,44 @@ export class Controls {
 		this.bindEvents();
 	}
 
+	/** Whether `/name` is a known command, for highlighting. */
+	readonly isCommand = (name: string): boolean =>
+		this.builtins.some((command) => command.name === name) ||
+		(this.piCommands ?? []).some((item) => item.value === `pi:${name}`);
+
 	setMeta(meta: PanelMeta): void {
 		this.meta = meta;
 		this.renderTabs();
+		this.approvalLabel.textContent = meta.approvalMode === "auto" ? "Auto edit" : "Ask for approval";
 		const thinking = meta.thinkingLevel && meta.thinkingLevel !== "off" ? ` · ${capitalize(meta.thinkingLevel)}` : "";
 		this.modelLabel.textContent = meta.model ? `${meta.model.id}${thinking}` : meta.started ? "No model" : "Model";
 		if (!this.effort.hidden) this.renderEffort();
 	}
 
-	setFallbackTitle(title: string | undefined): void {
-		this.fallbackTitle = title
-			?.split("\n")
-			.find((line) => line.trim())
-			?.trim();
-		this.renderTabs();
-	}
-
-	/** Browser-style tabs for the sessions opened in this panel; the active one opens the session menu. */
+	/** Terminal-style tabs: one pi process each; click to switch, trash to stop and remove. */
 	private renderTabs(): void {
-		const tabs = this.meta.tabs.length > 0 ? this.meta.tabs : [{ path: "", title: "New session", active: true }];
 		this.tabs.replaceChildren(
-			...tabs.map((tab) => {
-				const title = tab.active ? (this.meta.sessionName ?? this.fallbackTitle ?? tab.title) : tab.title;
-				const button = create("button", `tab${tab.active ? " active" : ""}`) as HTMLButtonElement;
-				button.type = "button";
-				button.title = tab.active ? `${title} (session menu)` : title;
-				button.setAttribute("role", "tab");
-				button.setAttribute("aria-selected", String(tab.active));
-				button.append(create("span", "tab-label", title));
+			...this.meta.tabs.map((tab) => {
+				const wrapper = create("div", `tab${tab.active ? " active" : ""}${tab.running ? " running" : ""}`);
+				wrapper.setAttribute("role", "tab");
+				wrapper.setAttribute("aria-selected", String(tab.active));
+				const main = create("button", "tab-main") as HTMLButtonElement;
+				main.type = "button";
+				main.title = tab.active ? `${tab.title} (session menu)` : tab.title;
+				main.append(create("span", "tab-dot"), create("span", "tab-label", tab.title));
 				if (tab.active) {
-					button.dataset.menuTrigger = "";
-					button.append(chevronIcon());
-					button.addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
+					main.dataset.menuTrigger = "";
+					main.addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
 				} else {
-					button.addEventListener("click", () => this.command("switchSession", tab.path));
+					main.addEventListener("click", () => this.command("switchTab", tab.id));
 				}
-				return button;
+				const close = create("button", "tab-close") as HTMLButtonElement;
+				close.type = "button";
+				close.title = tab.running ? "Stop and close this tab" : "Close this tab";
+				close.append(trashIcon());
+				close.addEventListener("click", () => this.command("closeTab", tab.id));
+				wrapper.append(main, close);
+				return wrapper;
 			}),
 		);
 		this.tabs.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -165,8 +168,16 @@ export class Controls {
 	setInput(text: string): void {
 		this.input.value = text;
 		this.input.focus();
+		this.inputChanged();
+	}
+
+	/** Keep the highlight layer, height and send button in step with the input text. */
+	private inputChanged(): void {
 		this.autoResize();
 		this.updateSendButton();
+		// A trailing space keeps the layer as tall as the textarea when the text ends with a newline.
+		renderTokens(this.highlight, `${this.input.value} `, this.isCommand);
+		this.highlight.scrollTop = this.input.scrollTop;
 	}
 
 	openMenu(menu: PanelMenu): void {
@@ -202,20 +213,23 @@ export class Controls {
 			}
 		});
 		this.input.addEventListener("input", () => {
-			this.autoResize();
-			this.updateSendButton();
+			this.inputChanged();
 			this.updateInlineMenu();
 		});
+		this.input.addEventListener("scroll", () => {
+			this.highlight.scrollTop = this.input.scrollTop;
+		});
+		element("approval").addEventListener("click", () => this.toggle(this.composerMenu, () => this.openApproval()));
 		this.input.addEventListener("blur", () => {
 			if (this.composerMode === "commands" || this.composerMode === "files") this.composerMenu.close();
 		});
 
-		element("new-session").addEventListener("click", () => this.command("newSession"));
+		element("new-tab").addEventListener("click", () => this.command("newTab"));
 		element("history").addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
 		element("model").addEventListener("click", () => (this.effort.hidden ? this.openEffort() : this.closeEffort()));
 		element("effort-title").addEventListener("click", () => {
 			this.closeEffort();
-			this.openModels();
+			this.openModels(true);
 		});
 		element("effort-reset").addEventListener("click", () => {
 			const level = this.meta.defaultThinkingLevel;
@@ -231,8 +245,11 @@ export class Controls {
 			if (event.key === "Escape") this.closeEffort();
 		});
 		document.addEventListener("mousedown", (event) => {
-			const target = event.target as HTMLElement;
-			if (!this.effort.hidden && !this.effort.contains(target) && !target.closest("#model")) this.closeEffort();
+			// composedPath() still lists menu rows that a click removed, so picking a model from the
+			// menu opened by the popover does not count as a click outside it.
+			const path = event.composedPath();
+			const inside = [this.effort, element("model"), element("composer-menu")].some((node) => path.includes(node));
+			if (!this.effort.hidden && !inside) this.closeEffort();
 		});
 		element("attach").addEventListener("click", () => this.toggle(this.composerMenu, () => this.openAttach()));
 
@@ -320,6 +337,7 @@ export class Controls {
 		if (!this.piCommands) {
 			this.query("commands", "", (items) => {
 				this.piCommands = items.map((item) => ({ ...item, value: `pi:${item.value}` }));
+				this.inputChanged();
 				if (this.composerMode === "commands" || this.inlineSlashPending()) show();
 			});
 		}
@@ -366,25 +384,22 @@ export class Controls {
 		this.input.value = before + this.input.value.slice(caret);
 		this.input.setSelectionRange(before.length, before.length);
 		this.input.focus();
-		this.autoResize();
-		this.updateSendButton();
+		this.inputChanged();
 	}
 
 	private openSessions(): void {
 		const actions: MenuItem[] = [
-			{ label: "New session", value: "action:new" },
 			{ label: "Fork from an earlier message...", value: "action:fork" },
 			{ label: "Rename session...", value: "action:rename" },
 		];
 		this.headerMenu.open({
-			sections: [{ items: actions }, { title: "Recent sessions", items: [] }],
+			sections: [{ items: actions }, { title: "Recent sessions (open in a tab)", items: [] }],
 			searchable: true,
 			placeholder: "Search sessions",
 			emptyText: "No sessions",
 			onSelect: (item) => {
 				const [kind, value] = splitValue(item.value);
-				if (kind === "session") this.command("switchSession", value);
-				else if (value === "new") this.command("newSession");
+				if (kind === "session") this.command("openSession", value);
 				else if (value === "fork") this.openForks();
 				else this.startRename();
 			},
@@ -392,7 +407,10 @@ export class Controls {
 		this.query("sessions", "", (items) =>
 			this.headerMenu.update([
 				{ items: actions },
-				{ title: "Recent sessions", items: items.map((item) => ({ ...item, value: `session:${item.value}` })) },
+				{
+					title: "Recent sessions (open in a tab)",
+					items: items.map((item) => ({ ...item, value: `session:${item.value}` })),
+				},
 			]),
 		);
 	}
@@ -408,7 +426,8 @@ export class Controls {
 		this.query("forks", "", (items) => this.headerMenu.update([{ items }]));
 	}
 
-	private openModels(): void {
+	/** `backToEffort`: reopen the effort popover after a model is picked from it. */
+	private openModels(backToEffort = false): void {
 		this.closeEffort();
 		this.openComposerMenu("picker", {
 			sections: undefined,
@@ -417,7 +436,8 @@ export class Controls {
 			emptyText: "No models. Log in to a provider with the pi CLI first.",
 			onSelect: (item) => {
 				this.command("setModel", item.value);
-				this.input.focus();
+				if (backToEffort) this.openEffort();
+				else this.input.focus();
 			},
 		});
 		this.query("models", "", (items) => this.composerMenu.update([{ items }]));
@@ -459,6 +479,27 @@ export class Controls {
 		if (dots.childElementCount !== levels.length) {
 			dots.replaceChildren(...levels.map(() => create("span", "effort-dot")));
 		}
+	}
+
+	private openApproval(): void {
+		const items: MenuItem[] = [
+			{
+				label: "Ask for approval",
+				description: "Review every edit in the diff editor first",
+				value: "ask",
+				current: this.meta.approvalMode === "ask",
+			},
+			{
+				label: "Auto edit",
+				description: "Apply edits without asking",
+				value: "auto",
+				current: this.meta.approvalMode === "auto",
+			},
+		];
+		this.openComposerMenu("picker", {
+			sections: [{ items }],
+			onSelect: (item) => this.command("setApprovalMode", item.value),
+		});
 	}
 
 	private openAttach(): void {
@@ -530,13 +571,13 @@ function capitalize(text: string): string {
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function chevronIcon(): SVGSVGElement {
+function trashIcon(): SVGSVGElement {
 	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
 	svg.setAttribute("class", "icon small");
 	svg.setAttribute("viewBox", "0 0 16 16");
 	svg.setAttribute("aria-hidden", "true");
 	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-	path.setAttribute("d", "M4.5 6.5 8 10l3.5-3.5");
+	path.setAttribute("d", "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4");
 	svg.append(path);
 	return svg;
 }

@@ -82,8 +82,12 @@ export type PanelMenu = "sessions" | "models" | "thinking" | "forks" | "rename";
 
 /** Actions the panel asks the host to perform. `arg` is the chosen menu value or typed argument. */
 export type PanelCommand =
+	| "newTab"
+	| "closeTab"
+	| "switchTab"
+	| "setApprovalMode"
 	| "newSession"
-	| "switchSession"
+	| "openSession"
 	| "fork"
 	| "clone"
 	| "rename"
@@ -95,19 +99,23 @@ export type PanelCommand =
 	| "attachFile"
 	| "attachProblems";
 
-/** A session tab in the panel header. */
+/** A chat tab in the panel header. Every tab runs its own pi process. */
 export interface SessionTab {
-	path: string;
+	id: string;
 	title: string;
 	active: boolean;
+	running: boolean;
 }
+
+/** "ask": every edit and write waits for Accept in the diff editor. "auto": they are applied directly. */
+export type ApprovalMode = "ask" | "auto";
 
 /** Session and model state shown in the panel header and composer. */
 export interface PanelMeta {
 	started: boolean;
 	sessionName?: string;
-	/** Sessions opened in this panel, oldest first. */
 	tabs: SessionTab[];
+	approvalMode: ApprovalMode;
 	/** Thinking level when pi started, the target of the reset button. */
 	defaultThinkingLevel?: string;
 	model?: { provider: string; id: string };

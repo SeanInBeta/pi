@@ -118,6 +118,11 @@
 				"category": "Pi",
 				"icon": "$(close)",
 				"enablement": "pi.reviewPending"
+			},
+			{
+				"command": "pi.newTab",
+				"title": "New Chat Tab",
+				"category": "Pi"
 			}
 		],
 		"menus": {
@@ -172,10 +177,18 @@
 					"default": [],
 					"description": "Extra pi CLI arguments, for example [\"--provider\", \"anthropic\"]."
 				},
-				"pi.reviewChanges": {
-					"type": "boolean",
-					"default": true,
-					"description": "Review every edit and write in a diff editor and accept or reject it before pi changes the file. Takes effect when pi starts."
+				"pi.approvalMode": {
+					"type": "string",
+					"enum": [
+						"ask",
+						"auto"
+					],
+					"enumDescriptions": [
+						"Review every edit and write in the diff editor and accept or reject it before pi changes the file.",
+						"Apply edits and writes without asking."
+					],
+					"default": "ask",
+					"description": "Whether pi's file edits wait for your approval. Also switchable in the chat panel."
 				}
 			}
 		}

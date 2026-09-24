@@ -6,8 +6,9 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 
 ## Chat panel
 
-- The panel header shows the sessions opened in this panel as tabs (up to 8, remembered per workspace, no close button). Click a tab to switch; the active tab opens the session menu. Session and model choices open inside the panel, not in VS Code's quick pick.
-- The composer has a `+` menu (attach selection, current file, problems, mention a file), a model chip, and a round send button. The model chip opens a Codex-style popover: the thinking level on a slider, the model name below it, a reset button (back to the level pi started with), and the level title opens the model list. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
+- Tabs work like terminals: every tab runs its own pi process, so tabs work at the same time (a pulsing dot marks a running tab). `+` opens a tab, the trash icon stops and closes one, and the active tab opens the session menu (fork, rename, recent sessions; a recent session opens in a tab, or reuses an empty one). Open tabs and their sessions are restored when the window reloads. Session and model choices open inside the panel, not in VS Code's quick pick.
+- The composer has a `+` menu (attach selection, current file, problems, mention a file), the approval mode, a model chip (model and thinking level), and a round send button. The model chip opens a Codex-style popover: the thinking level on a slider, the model name below it, a reset button (back to the level pi started with), and the level title opens the model list, which returns to the popover after a pick.
+- `@path` mentions and known `/commands` (including `/skill:...`) are highlighted in the input and in sent messages. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
 - A finished answer ends with a smile marker and a copy button.
 - `/` lists commands with fuzzy matching (`/awe` finds `/skill:awesome-review`). At the start of the input it lists the built-ins below and pi's extension, prompt template and skill commands; after a space in the middle of the text (`what is /`) it lists pi's commands and inserts the chosen one. `@` lists workspace files (fuzzy match, same matcher as pi's terminal UI) and inserts `@path`, like the terminal UI.
 - Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
@@ -16,7 +17,7 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 
 ## Reviewing file changes
 
-With `pi.reviewChanges` (default `true`), every `edit` and `write` waits for your decision before the file changes:
+The approval mode, switchable in the composer or with the `pi.approvalMode` setting, decides what happens to pi's `edit` and `write` calls. With "Ask for approval" (default) every change waits for your decision before the file changes; with "Auto edit" it is applied directly.
 
 1. The diff editor opens with the file on disk on the left and pi's exact new content on the right (an empty left side for a new file).
 2. Accept or Reject with the check and close buttons in the diff editor title bar, the notification buttons, or `Pi: Accept Proposed Change` / `Pi: Reject Proposed Change`.
@@ -24,7 +25,7 @@ With `pi.reviewChanges` (default `true`), every `edit` and `write` waits for you
 
 Closing the diff tab does not decide; the review stays pending until Accept, Reject or Abort. Reviews are shown one at a time.
 
-How it works: the extension starts pi with `--extension src/pi-extension/review-changes.ts`. That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`. The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
+How it works: the extension always starts pi with `--extension src/pi-extension/review-changes.ts`. That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`. The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
 
 ## Extension dialogs
 
@@ -45,7 +46,7 @@ Dialogs are shown one at a time. When pi resolves a dialog itself (timeout, abor
 
 ## Sessions and models
 
-pi saves sessions as usual (disable with `"pi.args": ["--no-session"]`). The session menu (header title or history button) has New Session, Fork, Rename and the saved sessions of this folder, newest first. The model chip opens the model and thinking level menu. Palette commands (`Pi: Switch Session`, `Pi: Select Model`, ...) and the status bar model item open the same in-panel menus.
+pi saves sessions as usual (disable with `"pi.args": ["--no-session"]`). The session menu (active tab or history button) has Fork, Rename and the saved sessions of this folder, newest first. `/new` starts a new session in the current tab; `+` opens a new tab. Palette commands (`Pi: Switch Session`, `Pi: Select Model`, ...) and the status bar model item open the same in-panel menus.
 
 Built-in slash commands, handled by the extension like pi's terminal UI handles them:
 
@@ -119,7 +120,7 @@ Code layout:
 
 - `pi.cliPath`: JavaScript entry of the pi CLI, run with `node`. Empty uses `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source through `tsx`, so pi does not need to be built.
 - `pi.args`: extra pi CLI arguments, for example `["--provider", "anthropic", "--model", "claude-sonnet-5"]`.
-- `pi.reviewChanges`: review every edit and write in a diff editor before pi changes the file (default `true`). Takes effect when pi starts.
+- `pi.approvalMode`: `ask` (default) reviews every edit and write in a diff editor first; `auto` applies them directly. Also switchable in the composer.
 
 ## Development
 

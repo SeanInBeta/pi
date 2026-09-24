@@ -1,47 +1,50 @@
-import { join } from "node:path";
 import * as vscode from "vscode";
-import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
-import type { RpcSessionSummary } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
-import type { Attachment, MenuItem, MenuQuery, PanelCommand, PanelMenu, PanelMeta, SessionTab } from "./chat-types.ts";
+import type {
+	ApprovalMode,
+	Attachment,
+	MenuItem,
+	MenuQuery,
+	PanelCommand,
+	PanelMenu,
+	PanelMeta,
+} from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
-import { ExtensionUIBridge } from "./extension-ui.ts";
+import { ExtensionUIBridge, type UITarget } from "./extension-ui.ts";
 import { ACCEPT, REJECT } from "./file-change.ts";
-import { createPiClient } from "./pi-launch.ts";
-import { buildPrompt } from "./prompt-context.ts";
-import { commandItems, fileItems, forkItems, modelItems, sessionItems, sessionTitle } from "./quick-picks.ts";
+import { PiSession, type PiSessionHost } from "./pi-session.ts";
+import { fileItems } from "./quick-picks.ts";
 
-const TABS_KEY = "pi.sessionTabs";
-const MAX_TABS = 8;
+/** Session files of the open tabs and the active one, restored when the window reloads. */
+const TABS_KEY = "pi.chatTabs";
 
-type PiStatus = "stopped" | "starting" | "idle" | "working";
+interface SavedTabs {
+	tabs: { file: string; title: string }[];
+	active?: string;
+}
 
-/** Owns one pi RPC process for the first workspace folder, feeds its events to the chat view, and logs them. */
-class PiController implements vscode.Disposable {
+/** Owns the chat tabs (one pi process each), routes panel actions to the active tab, and logs. */
+class PiController implements vscode.Disposable, PiSessionHost {
 	readonly chat: ChatViewProvider;
 	readonly ui: ExtensionUIBridge;
-	private readonly extensionPath: string;
+	readonly extensionPath: string;
 	private readonly output = vscode.window.createOutputChannel("Pi");
 	private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
 	private readonly modelItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-	private meta: PanelMeta = { started: false, thinkingLevels: [], tabs: [] };
 	private readonly workspaceState: vscode.Memento;
-	/** Session files opened in this panel, oldest first, persisted per workspace. */
-	private tabPaths: string[];
+	private readonly disposables: vscode.Disposable[] = [];
+	private sessions: PiSession[] = [];
+	private active: PiSession;
+	private lastMeta = "";
 	private files: { at: number; paths: string[] } | undefined;
-	private client: RpcClient | undefined;
-	private starting: Promise<RpcClient> | undefined;
-	/** Panel actions and sends run one at a time, so a session change cannot clear a reply that already started. */
-	private queue: Promise<unknown> = Promise.resolve();
-	private status: PiStatus = "stopped";
 
 	constructor(extensionUri: vscode.Uri, workspaceState: vscode.Memento) {
 		this.extensionPath = extensionUri.fsPath;
 		this.workspaceState = workspaceState;
-		this.tabPaths = workspaceState.get<string[]>(TABS_KEY, []);
 		this.chat = new ChatViewProvider(extensionUri, {
-			submit: (text) => this.run(() => this.serial(() => this.submit(text))),
-			abort: () => this.run(() => this.abort()),
+			submit: (text) => this.run(() => this.withActive((session) => session.serial(() => session.submit(text)))),
+			abort: () => this.run(() => this.active.abort()),
+			removeAttachment: (id) => this.active.dispatch({ type: "draft_remove", ids: [id] }),
 			query: async (query, text) => {
 				try {
 					return await this.query(query, text);
@@ -50,68 +53,170 @@ class PiController implements vscode.Disposable {
 					return [];
 				}
 			},
-			command: (command, arg) => this.run(() => this.serial(() => this.command(command, arg))),
+			command: (command, arg) => this.run(() => this.command(command, arg)),
+			// The shown tab starts with the panel, so a restored session loads its history right away.
+			ready: () => this.run(() => this.active.start()),
 		});
 		this.ui = new ExtensionUIBridge({
-			respond: (response) => this.client?.sendExtensionUIResponse(response),
-			setInput: (text) => this.chat.setInput(text),
-			setStatus: (status) => this.chat.dispatch({ type: "ui_status", status }),
 			log: (line) => this.output.appendLine(line),
+			autoApprove: () => this.approvalMode() === "auto",
 		});
 		this.statusItem.command = "pi.showLog";
-		this.setStatus("stopped");
 		this.statusItem.show();
 		this.modelItem.command = "pi.selectModel";
 		this.modelItem.tooltip = "Select pi model";
+
+		const saved = workspaceState.get<SavedTabs>(TABS_KEY, { tabs: [] });
+		this.sessions = (saved.tabs ?? []).map((tab) => new PiSession(this, tab.file, tab.title));
+		if (this.sessions.length === 0) this.sessions.push(new PiSession(this));
+		this.active = this.sessions.find((session) => session.info.sessionFile === saved.active) ?? this.sessions[0]!;
+		this.disposables.push(
+			vscode.workspace.onDidChangeConfiguration((event) => {
+				if (event.affectsConfiguration("pi.approvalMode")) this.publishMeta();
+			}),
+		);
+		this.publishMeta();
 	}
 
-	/** Start pi, or return the running client. Concurrent callers share one process. */
-	start(): Promise<RpcClient> {
-		if (this.client) return Promise.resolve(this.client);
-		this.starting ??= this.spawn().finally(() => {
-			this.starting = undefined;
-		});
-		return this.starting;
+	// PiSessionHost
+
+	log(session: PiSession, line: string): void {
+		this.output.appendLine(this.sessions.length > 1 ? `[${session.title}] ${line}` : line);
+	}
+
+	stateChanged(session: PiSession, prev: PiSession["state"]): void {
+		if (session === this.active) this.chat.update(prev, session.state);
+		// A first user message renames the tab.
+		this.publishMeta();
+	}
+
+	infoChanged(): void {
+		this.publishMeta();
+		this.saveTabs();
+	}
+
+	uiRequest(session: PiSession, request: Parameters<ExtensionUIBridge["handle"]>[0]): void {
+		this.ui.handle(request, this.uiTarget(session));
+	}
+
+	settled(session: PiSession): void {
+		this.ui.cancel(session.id);
+	}
+
+	setInput(session: PiSession, text: string): void {
+		if (session === this.active) this.chat.setInput(text);
+	}
+
+	// Tabs
+
+	async newTab(): Promise<void> {
+		const session = new PiSession(this);
+		this.sessions.push(session);
+		await this.activate(session);
+	}
+
+	/** Stop the tab's pi process and remove it. The last tab is replaced by a new empty one. */
+	async closeTab(id: string | undefined): Promise<void> {
+		const session = this.sessions.find((candidate) => candidate.id === id) ?? this.active;
+		const index = this.sessions.indexOf(session);
+		this.sessions.splice(index, 1);
+		this.ui.cancel(session.id);
+		if (this.sessions.length === 0) this.sessions.push(new PiSession(this));
+		if (session === this.active) await this.activate(this.sessions[Math.min(index, this.sessions.length - 1)]!);
+		else this.publishMeta();
+		this.saveTabs();
+		await session.stop();
+	}
+
+	async switchTab(id: string | undefined): Promise<void> {
+		const session = this.sessions.find((candidate) => candidate.id === id);
+		if (session) await this.activate(session);
+	}
+
+	/** Open a saved session: focus its tab, reuse an empty active tab, or open a new tab. */
+	async openSession(path: string | undefined): Promise<void> {
+		if (!path) return;
+		const open = this.sessions.find((session) => session.info.sessionFile === path);
+		if (open) return this.activate(open);
+		if (this.active.isEmpty && this.active.status !== "stopped") {
+			return this.active.serial(() => this.active.command("openSession", path));
+		}
+		const session = new PiSession(this, path);
+		this.sessions.push(session);
+		await this.activate(session);
+	}
+
+	private async activate(session: PiSession): Promise<void> {
+		this.active = session;
+		this.chat.show(session.state);
+		this.publishMeta();
+		this.saveTabs();
+		// Tabs restored from a previous window start their process when first shown.
+		await session.start();
+	}
+
+	/** Start the active tab if needed; used by the panel and palette commands. */
+	start(): Promise<unknown> {
+		return this.active.start();
 	}
 
 	async stop(): Promise<void> {
-		const client = this.client ?? (await this.starting?.catch(() => undefined));
-		this.client = undefined;
-		if (!client) return;
-		this.ui.cancelAll();
-		await client.stop();
-		this.output.appendLine("pi stopped");
-		this.setStatus("stopped");
-		this.setMeta({ ...this.meta, started: false });
-		// A run cut off by stopping never emits agent_settled.
-		this.chat.dispatch({ type: "agent_settled" });
+		await this.active.stop();
 	}
 
-	/** Send a message: a new prompt while idle, a steering message while pi is working. */
-	async send(text: string): Promise<void> {
-		const client = await this.start();
-		if (this.status === "working") {
-			await client.steer(text);
-		} else {
-			await client.prompt(text);
+	async stopAll(): Promise<void> {
+		await Promise.all(this.sessions.map((session) => session.stop()));
+	}
+
+	// Panel
+
+	async query(query: MenuQuery, text: string): Promise<MenuItem[]> {
+		if (query === "files") return fileItems(await this.workspaceFiles(), text);
+		return this.active.query(query);
+	}
+
+	async command(command: PanelCommand, arg: string | undefined): Promise<void> {
+		switch (command) {
+			case "newTab":
+				return this.newTab();
+			case "closeTab":
+				return this.closeTab(arg);
+			case "switchTab":
+				return this.switchTab(arg);
+			case "openSession":
+				return this.openSession(arg);
+			case "setApprovalMode":
+				return this.setApprovalMode(arg === "auto" ? "auto" : "ask");
+			case "attachSelection":
+				return this.addSelection();
+			case "attachFile":
+				return this.addFile();
+			case "attachProblems":
+				return this.addDiagnostics();
+			default:
+				return this.withActive((session) => session.serial(() => session.command(command, arg)));
 		}
-	}
-
-	/** Send typed text with the composer draft. The draft is kept if sending fails. */
-	async submit(text: string): Promise<void> {
-		const attachments = this.chat.draft();
-		const prompt = buildPrompt(text, attachments);
-		if (!prompt) return;
-		if (attachments.length > 0) this.chat.dispatch({ type: "prompt_sent", prompt, text, attachments });
-		await this.send(prompt);
-		this.chat.dispatch({ type: "draft_remove", ids: attachments.map((attachment) => attachment.id) });
 	}
 
 	async prompt(): Promise<void> {
 		const message = await vscode.window.showInputBox({ prompt: "Message for pi" });
 		if (!message) return;
 		await this.focusChat();
-		await this.submit(message);
+		await this.withActive((session) => session.serial(() => session.submit(message)));
+	}
+
+	async abort(): Promise<void> {
+		await this.active.abort();
+	}
+
+	async newSession(): Promise<void> {
+		await this.command("newSession", undefined);
+	}
+
+	/** Open an in-panel menu, for palette commands and the status bar. */
+	async openMenu(menu: PanelMenu): Promise<void> {
+		await this.focusChat();
+		this.chat.openMenu(menu);
 	}
 
 	async addSelection(): Promise<void> {
@@ -146,213 +251,12 @@ class PiController implements vscode.Disposable {
 		await this.attach([attachment]);
 	}
 
-	async abort(): Promise<void> {
-		await this.client?.abort();
-	}
-
-	async newSession(): Promise<void> {
-		const client = await this.idleClient();
-		if ((await client.newSession()).cancelled) return;
-		this.chat.reset();
-		await this.refreshState(client);
-	}
-
-	/** Items for an in-panel menu. */
-	async query(query: MenuQuery, text: string): Promise<MenuItem[]> {
-		if (query === "files") return fileItems(await this.workspaceFiles(), text);
-		const client = await this.start();
-		switch (query) {
-			case "sessions": {
-				const [sessions, state] = await Promise.all([client.listSessions(), client.getState()]);
-				return sessionItems(sessions, state.sessionFile);
-			}
-			case "models":
-				return modelItems(await client.getAvailableModels(), this.meta.model);
-			case "forks":
-				return forkItems(await client.getForkMessages());
-			case "commands":
-				return commandItems(await client.getCommands());
-		}
-	}
-
-	/** Actions from the panel's menus, buttons and built-in slash commands. */
-	async command(command: PanelCommand, arg: string | undefined): Promise<void> {
-		switch (command) {
-			case "newSession":
-				return this.newSession();
-			case "switchSession": {
-				const client = await this.idleClient();
-				if (!arg || (await client.switchSession(arg)).cancelled) return;
-				return this.reload(client);
-			}
-			case "fork": {
-				// Forking starts a new session from before the chosen message and returns that message for editing.
-				const client = await this.idleClient();
-				if (!arg) return;
-				const result = await client.fork(arg);
-				if (result.cancelled) return;
-				await this.reload(client);
-				this.chat.setInput(result.text);
-				return;
-			}
-			case "clone": {
-				const client = await this.idleClient();
-				if ((await client.clone()).cancelled) return;
-				return this.reload(client);
-			}
-			case "rename": {
-				const client = await this.start();
-				if (!arg?.trim()) return;
-				await client.setSessionName(arg.trim());
-				return this.refreshState(client);
-			}
-			case "setModel": {
-				const client = await this.start();
-				const model = await this.resolveModel(client, arg ?? "");
-				await client.setModel(model.provider, model.id);
-				return this.refreshState(client);
-			}
-			case "setThinking": {
-				const client = await this.start();
-				const level = this.meta.thinkingLevels.find((candidate) => candidate === arg?.trim());
-				if (!level)
-					throw new Error(
-						`Unknown thinking level "${arg ?? ""}". Available: ${this.meta.thinkingLevels.join(", ")}`,
-					);
-				await client.setThinkingLevel(level as Parameters<RpcClient["setThinkingLevel"]>[0]);
-				return this.refreshState(client);
-			}
-			case "compact": {
-				const client = await this.idleClient();
-				await client.compact(arg?.trim() || undefined);
-				return this.reload(client);
-			}
-			case "copyLast": {
-				const text = await (await this.start()).getLastAssistantText();
-				if (!text) throw new Error("No assistant message to copy yet.");
-				await vscode.env.clipboard.writeText(text);
-				void vscode.window.showInformationMessage("Pi: copied the last assistant message.");
-				return;
-			}
-			case "attachSelection":
-				return this.addSelection();
-			case "attachFile":
-				return this.addFile();
-			case "attachProblems":
-				return this.addDiagnostics();
-		}
-	}
-
-	/** Open an in-panel menu, for palette commands and the status bar. */
-	async openMenu(menu: PanelMenu): Promise<void> {
-		await this.focusChat();
-		this.chat.openMenu(menu);
-	}
-
-	/** Accept a menu value (`{"provider","id"}` JSON) or a typed `provider/id` or model id. */
-	private async resolveModel(client: RpcClient, arg: string): Promise<{ provider: string; id: string }> {
-		if (arg.startsWith("{")) return JSON.parse(arg) as { provider: string; id: string };
-		const models = await client.getAvailableModels();
-		const match =
-			models.find((model) => `${model.provider}/${model.id}` === arg) ?? models.find((model) => model.id === arg);
-		if (!match) throw new Error(`Unknown model "${arg}".`);
-		return match;
-	}
-
-	/** Relative workspace paths for @ mentions, cached briefly while the user types. */
-	private async workspaceFiles(): Promise<string[]> {
-		if (this.files && Date.now() - this.files.at < 10_000) return this.files.paths;
-		const uris = await vscode.workspace.findFiles("**/*", "**/{node_modules,.git,dist,out}/**", 20_000);
-		const paths = uris.map((uri) => vscode.workspace.asRelativePath(uri, false)).sort();
-		this.files = { at: Date.now(), paths };
-		return paths;
-	}
-
-	/** Session changes while a run streams would race with its events. */
-	private async idleClient(): Promise<RpcClient> {
-		const client = await this.start();
-		if (this.status === "working") throw new Error("pi is working. Abort the current run first.");
-		return client;
-	}
-
-	/** Show the active session's history and settings after it changed underneath the transcript. */
-	private async reload(client: RpcClient): Promise<void> {
-		this.chat.load(await client.getMessages());
-		await this.refreshState(client);
-	}
-
-	private async refreshState(client: RpcClient): Promise<void> {
-		const [state, thinkingLevels, sessions] = await Promise.all([
-			client.getState(),
-			client.getAvailableThinkingLevels(),
-			client.listSessions(),
-		]);
-		this.setMeta({
-			started: true,
-			sessionName: state.sessionName,
-			model: state.model ? { provider: state.model.provider, id: state.model.id } : undefined,
-			thinkingLevel: state.thinkingLevel,
-			thinkingLevels,
-			defaultThinkingLevel: this.meta.defaultThinkingLevel ?? state.thinkingLevel,
-			tabs: this.updateTabs(state.sessionFile, state.sessionName, sessions),
-		});
-	}
-
-	/**
-	 * Keep the current session in the tab list and drop tabs whose file is gone, such as a new
-	 * session left before its first message. The oldest inactive tabs go first past MAX_TABS.
-	 */
-	private updateTabs(
-		current: string | undefined,
-		currentName: string | undefined,
-		sessions: RpcSessionSummary[],
-	): SessionTab[] {
-		const saved = new Map(sessions.map((session) => [session.path, session]));
-		const paths = this.tabPaths.filter((path) => path === current || saved.has(path));
-		if (current && !paths.includes(current)) paths.push(current);
-		while (paths.length > MAX_TABS)
-			paths.splice(
-				paths.findIndex((path) => path !== current),
-				1,
-			);
-		this.tabPaths = paths;
-		void this.workspaceState.update(TABS_KEY, paths);
-		return paths.map((path) => {
-			const info = saved.get(path);
-			const name = path === current ? currentName : undefined;
-			return { path, title: name ?? (info && sessionTitle(info)) ?? "New session", active: path === current };
-		});
-	}
-
-	private setMeta(meta: PanelMeta): void {
-		this.meta = meta;
-		this.chat.setMeta(meta);
-		if (!meta.started) {
-			this.modelItem.hide();
-			return;
-		}
-		const thinking = meta.thinkingLevel && meta.thinkingLevel !== "off" ? ` · ${meta.thinkingLevel}` : "";
-		this.modelItem.text = `$(sparkle) ${meta.model?.id ?? "no model"}${thinking}`;
-		this.modelItem.show();
-	}
-
-	private async attach(attachments: Attachment[]): Promise<void> {
-		this.chat.dispatch({ type: "draft_add", attachments });
-		await this.focusChat();
-	}
-
 	async focusChat(): Promise<void> {
 		await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
 	}
 
 	showLog(): void {
 		this.output.show();
-	}
-
-	private serial<T>(action: () => Promise<T>): Promise<T> {
-		const result = this.queue.then(action);
-		this.queue = result.catch(() => undefined);
-		return result;
 	}
 
 	/** Run a command handler and report failures instead of dropping them. */
@@ -364,86 +268,97 @@ class PiController implements vscode.Disposable {
 		}
 	}
 
-	private report(error: unknown): void {
-		const message = error instanceof Error ? error.message : String(error);
-		this.output.appendLine(`error: ${message}`);
-		this.chat.dispatch({ type: "ui_error", message });
-		void vscode.window.showErrorMessage(`Pi: ${message.split("\n")[0]}`);
-	}
-
-	/** The process is stopped by deactivate(), which VS Code awaits. */
 	dispose(): void {
 		this.ui.dispose();
 		this.statusItem.dispose();
 		this.modelItem.dispose();
 		this.output.dispose();
+		for (const disposable of this.disposables) disposable.dispose();
 	}
 
-	private async spawn(): Promise<RpcClient> {
-		const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-		if (!cwd) throw new Error("Open a folder before starting pi");
+	private async withActive(action: (session: PiSession) => Promise<unknown>): Promise<void> {
+		await action(this.active);
+	}
 
-		const config = vscode.workspace.getConfiguration("pi");
-		const reviewArgs = config.get<boolean>("reviewChanges", true)
-			? ["--extension", join(this.extensionPath, "src", "pi-extension", "review-changes.ts")]
-			: [];
-		const client = createPiClient({
-			extensionPath: this.extensionPath,
-			cwd,
-			cliPath: config.get<string>("cliPath") || undefined,
-			args: [...reviewArgs, ...(config.get<string[]>("args") ?? [])],
-		});
-		client.onExtensionUIRequest((request) => {
-			// Metadata can hold whole files; keep the log readable.
-			this.output.appendLine(
-				JSON.stringify({
-					...request,
-					metadata: "metadata" in request && request.metadata ? "[metadata]" : undefined,
-				}),
-			);
-			this.ui.handle(request);
-		});
-		// A new process starts a new session, so the transcript starts empty.
-		this.chat.reset();
-		client.onEvent((event) => {
-			this.output.appendLine(JSON.stringify(event));
-			this.chat.dispatch(event);
-			if (event.type === "agent_start") this.setStatus("working");
-			if (event.type === "agent_settled") {
-				this.setStatus("idle");
-				// A new session gets its title from the first message.
-				void this.refreshState(client).catch((error: unknown) => this.report(error));
-				// Dialogs of the finished run (for example a review cut off by Abort) are already resolved by pi.
-				this.ui.cancelAll();
-			}
-			if (event.type === "session_info_changed") this.setMeta({ ...this.meta, sessionName: event.name });
-			if (event.type === "thinking_level_changed") this.setMeta({ ...this.meta, thinkingLevel: event.level });
-		});
+	private approvalMode(): ApprovalMode {
+		return vscode.workspace.getConfiguration("pi").get<ApprovalMode>("approvalMode", "ask") === "auto"
+			? "auto"
+			: "ask";
+	}
 
-		this.setStatus("starting");
-		try {
-			await client.start();
-			const state = await client.getState();
-			const model = state.model ? `${state.model.provider}/${state.model.id}` : "none";
-			this.output.appendLine(`pi started in ${cwd} (model: ${model})`);
-			// pi.args such as --continue or --session resume an existing session.
-			if (state.messageCount > 0) this.chat.load(await client.getMessages());
-			await this.refreshState(client);
-		} catch (error) {
-			await client.stop();
-			this.setStatus("stopped");
-			throw error;
+	private async setApprovalMode(mode: ApprovalMode): Promise<void> {
+		await vscode.workspace.getConfiguration("pi").update("approvalMode", mode, vscode.ConfigurationTarget.Global);
+		this.publishMeta();
+	}
+
+	private uiTarget(session: PiSession): UITarget {
+		return {
+			id: session.id,
+			label: () => session.title,
+			respond: (response) => session.respondToUI(response),
+			setInput: (text) => this.setInput(session, text),
+			setStatus: (status) => session.dispatch({ type: "ui_status", status }),
+		};
+	}
+
+	private async attach(attachments: Attachment[]): Promise<void> {
+		this.active.dispatch({ type: "draft_add", attachments });
+		await this.focusChat();
+	}
+
+	/** Relative workspace paths for @ mentions, cached briefly while the user types. */
+	private async workspaceFiles(): Promise<string[]> {
+		if (this.files && Date.now() - this.files.at < 10_000) return this.files.paths;
+		const uris = await vscode.workspace.findFiles("**/*", "**/{node_modules,.git,dist,out}/**", 20_000);
+		const paths = uris.map((uri) => vscode.workspace.asRelativePath(uri, false)).sort();
+		this.files = { at: Date.now(), paths };
+		return paths;
+	}
+
+	/** Header tabs plus the active tab's settings; posted only when something visible changed. */
+	private publishMeta(): void {
+		const info = this.active.info;
+		const meta: PanelMeta = {
+			...info,
+			approvalMode: this.approvalMode(),
+			tabs: this.sessions.map((session) => ({
+				id: session.id,
+				title: session.title,
+				active: session === this.active,
+				running: session.status === "working" || session.status === "starting",
+			})),
+		};
+		const serialized = JSON.stringify(meta);
+		if (serialized !== this.lastMeta) {
+			this.lastMeta = serialized;
+			this.chat.setMeta(meta);
 		}
-		this.client = client;
-		this.setStatus("idle");
-		return client;
+		const status = this.active.status;
+		const working = this.sessions.filter((session) => session.status === "working").length;
+		const icon = status === "working" || status === "starting" ? "$(loading~spin)" : "$(hubot)";
+		this.statusItem.text = `${icon} pi: ${status}${working > 1 ? ` (${working} tabs working)` : ""}`;
+		this.statusItem.tooltip = "Show pi log";
+		if (info.started) {
+			const thinking = info.thinkingLevel && info.thinkingLevel !== "off" ? ` · ${info.thinkingLevel}` : "";
+			this.modelItem.text = `$(sparkle) ${info.model?.id ?? "no model"}${thinking}`;
+			this.modelItem.show();
+		} else {
+			this.modelItem.hide();
+		}
 	}
 
-	private setStatus(status: PiStatus): void {
-		this.status = status;
-		const icon = status === "working" || status === "starting" ? "$(loading~spin)" : "$(hubot)";
-		this.statusItem.text = `${icon} pi: ${status}`;
-		this.statusItem.tooltip = "Show pi log";
+	private saveTabs(): void {
+		const tabs = this.sessions.flatMap((session) =>
+			session.info.sessionFile ? [{ file: session.info.sessionFile, title: session.title }] : [],
+		);
+		void this.workspaceState.update(TABS_KEY, { tabs, active: this.active.info.sessionFile } satisfies SavedTabs);
+	}
+
+	private report(error: unknown): void {
+		const message = error instanceof Error ? error.message : String(error);
+		this.output.appendLine(`error: ${message}`);
+		this.active.dispatch({ type: "ui_error", message });
+		void vscode.window.showErrorMessage(`Pi: ${message.split("\n")[0]}`);
 	}
 }
 
@@ -465,6 +380,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand("pi.addDiagnostics", () => pi.run(() => pi.addDiagnostics())),
 		vscode.commands.registerCommand("pi.acceptChange", () => pi.ui.resolveReview(ACCEPT)),
 		vscode.commands.registerCommand("pi.rejectChange", () => pi.ui.resolveReview(REJECT)),
+		vscode.commands.registerCommand("pi.newTab", () => pi.run(() => pi.newTab())),
 		vscode.commands.registerCommand("pi.newSession", () => pi.run(() => pi.newSession())),
 		vscode.commands.registerCommand("pi.switchSession", () => pi.run(() => pi.openMenu("sessions"))),
 		vscode.commands.registerCommand("pi.forkSession", () => pi.run(() => pi.openMenu("forks"))),
@@ -475,6 +391,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export async function deactivate(): Promise<void> {
-	await controller?.stop();
+	await controller?.stopAll();
 	controller = undefined;
 }
