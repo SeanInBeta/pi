@@ -1,0 +1,71 @@
+{
+	"name": "pi-vscode",
+	"displayName": "Pi",
+	"description": "VS Code integration for the pi coding agent",
+	"version": "0.87.1",
+	"private": true,
+	"publisher": "earendil-works",
+	"license": "MIT",
+	"type": "module",
+	"main": "./dist/extension.cjs",
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "pi.start",
+				"title": "Start",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.stop",
+				"title": "Stop",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.prompt",
+				"title": "Send Prompt",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.abort",
+				"title": "Abort",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.showLog",
+				"title": "Show Log",
+				"category": "Pi"
+			}
+		],
+		"configuration": {
+			"title": "Pi",
+			"properties": {
+				"pi.cliPath": {
+					"type": "string",
+					"default": "",
+					"description": "JavaScript entry point of the pi CLI, run with node. Empty uses the monorepo-local source launcher (scripts/pi-dev-rpc.mjs)."
+				},
+				"pi.args": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"description": "Extra pi CLI arguments, for example [\"--provider\", \"anthropic\"]."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --sourcemap --outfile=dist/extension.cjs",
+		"test": "vitest --run"
+	},
+	"devDependencies": {
+		"@types/vscode": "1.100.0",
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	}
+}
