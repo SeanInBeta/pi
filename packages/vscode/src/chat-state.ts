@@ -1,15 +1,31 @@
 import type { JsonAgentSessionEvent } from "../../coding-agent/src/modes/json-event.ts";
-import type { AssistantBlock, ChatItem, ChatState, HostMessage, ToolRun } from "./chat-types.ts";
+import type {
+	AssistantBlock,
+	Attachment,
+	ChatItem,
+	ChatState,
+	HostMessage,
+	SentPrompt,
+	ToolRun,
+} from "./chat-types.ts";
 
-/** A pi RPC event, or an error raised by the extension itself (for example a rejected prompt). */
-export type ChatAction = JsonAgentSessionEvent | { type: "ui_error"; message: string };
+/** A pi RPC event, or an action raised by the extension itself. */
+export type ChatAction =
+	| JsonAgentSessionEvent
+	/** An error outside pi's event stream, for example a rejected prompt. */
+	| { type: "ui_error"; message: string }
+	/** A new pi session started. The transcript clears; the composer draft survives. */
+	| { type: "session_reset" }
+	| { type: "draft_add"; attachments: Attachment[] }
+	| { type: "draft_remove"; ids: string[] }
+	| ({ type: "prompt_sent" } & SentPrompt);
 
 type AgentMessage = Extract<JsonAgentSessionEvent, { type: "message_start" }>["message"];
 type AssistantMessageEvent = Extract<JsonAgentSessionEvent, { type: "message_update" }>["assistantMessageEvent"];
 type AssistantItem = Extract<ChatItem, { kind: "assistant" }>;
 
 export function createChatState(): ChatState {
-	return { items: [], running: false, queued: 0 };
+	return { items: [], running: false, queued: 0, draft: [], sent: [] };
 }
 
 /** Fold one action into the transcript. Unchanged items keep their identity so diffChat() can skip them. */
@@ -17,6 +33,17 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 	switch (action.type) {
 		case "ui_error":
 			return appendItem(state, { kind: "error", text: action.message });
+		case "session_reset":
+			return { ...createChatState(), draft: state.draft, sent: state.sent };
+		case "draft_add":
+			return { ...state, draft: [...state.draft, ...action.attachments] };
+		case "draft_remove":
+			return { ...state, draft: state.draft.filter((attachment) => !action.ids.includes(attachment.id)) };
+		case "prompt_sent":
+			return {
+				...state,
+				sent: [...state.sent, { prompt: action.prompt, text: action.text, attachments: action.attachments }],
+			};
 		case "agent_start":
 			return { ...state, running: true };
 		case "agent_settled":
@@ -84,6 +111,7 @@ export function diffChat(prev: ChatState, next: ChatState): HostMessage {
 		running: next.running,
 		status: next.status,
 		queued: next.queued,
+		draft: next.draft,
 	};
 }
 
@@ -97,7 +125,14 @@ function startMessage(state: ChatState, message: AgentMessage): ChatState {
 			typeof message.content === "string"
 				? message.content
 				: message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n");
-		return appendItem(state, { kind: "user", text });
+		// A prompt built with attachments comes back as one text; show the typed text and the attachments instead.
+		const sentIndex = state.sent.findIndex((sent) => sent.prompt === text);
+		if (sentIndex === -1) return appendItem(state, { kind: "user", text });
+		const sent = state.sent[sentIndex]!;
+		return appendItem(
+			{ ...state, sent: state.sent.filter((_, index) => index !== sentIndex) },
+			{ kind: "user", text: sent.text, attachments: sent.attachments },
+		);
 	}
 	if (message.role === "assistant") {
 		return appendItem(state, {

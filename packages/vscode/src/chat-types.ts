@@ -14,8 +14,32 @@ export interface ToolRun {
 	output: string;
 }
 
+/** Editor context attached to a message. `content` is exactly what the prompt includes. */
+export interface Attachment {
+	id: string;
+	kind: "selection" | "file" | "diagnostics";
+	/** Short chip label, for example `src/a.ts:10-20`. */
+	label: string;
+	/** Workspace-relative path, or absolute for files outside the workspace. */
+	path: string;
+	/** 1-based inclusive line range of a selection. */
+	lines?: { start: number; end: number };
+	/** Editor language id, used as the code fence language. */
+	language?: string;
+	content: string;
+	/** Caveat shown to the user and the model, for example unsaved changes. */
+	note?: string;
+}
+
+/** A prompt sent with attachments, remembered until pi echoes it back as a user message. */
+export interface SentPrompt {
+	prompt: string;
+	text: string;
+	attachments: Attachment[];
+}
+
 export type ChatItem =
-	| { kind: "user"; text: string }
+	| { kind: "user"; text: string; attachments?: Attachment[] }
 	| {
 			kind: "assistant";
 			/** Indexed by provider content index; gaps are null. */
@@ -34,6 +58,9 @@ export interface ChatState {
 	status?: string;
 	/** Number of queued steering and follow-up messages. */
 	queued: number;
+	/** Attachments waiting in the composer for the next message. */
+	draft: Attachment[];
+	sent: SentPrompt[];
 }
 
 /** Host to webview. `update` carries only items whose identity changed since the last message. */
@@ -46,7 +73,12 @@ export type HostMessage =
 			running: boolean;
 			status?: string;
 			queued: number;
+			draft: Attachment[];
 	  };
 
 /** Webview to host. */
-export type WebviewMessage = { type: "ready" } | { type: "send"; text: string } | { type: "abort" };
+export type WebviewMessage =
+	| { type: "ready" }
+	| { type: "send"; text: string }
+	| { type: "abort" }
+	| { type: "removeAttachment"; id: string };

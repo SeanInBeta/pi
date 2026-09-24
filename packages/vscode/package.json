@@ -55,8 +55,47 @@
 				"command": "pi.showLog",
 				"title": "Show Log",
 				"category": "Pi"
+			},
+			{
+				"command": "pi.addSelection",
+				"title": "Add Selection to Pi Chat",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.addFile",
+				"title": "Add File to Pi Chat",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.addDiagnostics",
+				"title": "Add Problems to Pi Chat",
+				"category": "Pi"
 			}
 		],
+		"menus": {
+			"editor/context": [
+				{
+					"command": "pi.addSelection",
+					"when": "editorHasSelection",
+					"group": "pi@1"
+				},
+				{
+					"command": "pi.addFile",
+					"group": "pi@2"
+				},
+				{
+					"command": "pi.addDiagnostics",
+					"group": "pi@3"
+				}
+			],
+			"explorer/context": [
+				{
+					"command": "pi.addFile",
+					"when": "!explorerResourceIsFolder",
+					"group": "pi@1"
+				}
+			]
+		},
 		"configuration": {
 			"title": "Pi",
 			"properties": {

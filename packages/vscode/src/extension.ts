@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
+import type { Attachment } from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
+import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
 import { createPiClient } from "./pi-launch.ts";
+import { buildPrompt } from "./prompt-context.ts";
 
 type PiStatus = "stopped" | "starting" | "idle" | "working";
 
@@ -18,7 +21,7 @@ class PiController implements vscode.Disposable {
 	constructor(extensionUri: vscode.Uri) {
 		this.extensionPath = extensionUri.fsPath;
 		this.chat = new ChatViewProvider(extensionUri, {
-			send: (text) => this.run(() => this.send(text)),
+			submit: (text) => this.run(() => this.submit(text)),
 			abort: () => this.run(() => this.abort()),
 		});
 		this.statusItem.command = "pi.showLog";
@@ -56,15 +59,66 @@ class PiController implements vscode.Disposable {
 		}
 	}
 
+	/** Send typed text with the composer draft. The draft is kept if sending fails. */
+	async submit(text: string): Promise<void> {
+		const attachments = this.chat.draft();
+		const prompt = buildPrompt(text, attachments);
+		if (!prompt) return;
+		if (attachments.length > 0) this.chat.dispatch({ type: "prompt_sent", prompt, text, attachments });
+		await this.send(prompt);
+		this.chat.dispatch({ type: "draft_remove", ids: attachments.map((attachment) => attachment.id) });
+	}
+
 	async prompt(): Promise<void> {
 		const message = await vscode.window.showInputBox({ prompt: "Message for pi" });
 		if (!message) return;
-		await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
-		await this.send(message);
+		await this.focusChat();
+		await this.submit(message);
+	}
+
+	async addSelection(): Promise<void> {
+		const editor = vscode.window.activeTextEditor;
+		const attachments = editor ? selectionAttachments(editor) : [];
+		if (attachments.length === 0) {
+			void vscode.window.showInformationMessage("Pi: select some text first.");
+			return;
+		}
+		await this.attach(attachments);
+	}
+
+	/** Attach the file from the explorer context menu, or the active editor's file. */
+	async addFile(uri?: vscode.Uri): Promise<void> {
+		const document = uri ? await vscode.workspace.openTextDocument(uri) : vscode.window.activeTextEditor?.document;
+		if (!document) {
+			void vscode.window.showInformationMessage("Pi: open a file first.");
+			return;
+		}
+		await this.attach([fileAttachment(document)]);
+	}
+
+	/** Attach problems of the active file, or workspace errors when no file is open. */
+	async addDiagnostics(): Promise<void> {
+		const document = vscode.window.activeTextEditor?.document;
+		const attachment = await diagnosticsAttachment(document);
+		if (!attachment) {
+			const scope = document ? vscode.workspace.asRelativePath(document.uri, false) : "the workspace";
+			void vscode.window.showInformationMessage(`Pi: no problems in ${scope}.`);
+			return;
+		}
+		await this.attach([attachment]);
 	}
 
 	async abort(): Promise<void> {
 		await this.client?.abort();
+	}
+
+	private async attach(attachments: Attachment[]): Promise<void> {
+		this.chat.dispatch({ type: "draft_add", attachments });
+		await this.focusChat();
+	}
+
+	private async focusChat(): Promise<void> {
+		await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
 	}
 
 	showLog(): void {
@@ -146,6 +200,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand("pi.prompt", () => pi.run(() => pi.prompt())),
 		vscode.commands.registerCommand("pi.abort", () => pi.run(() => pi.abort())),
 		vscode.commands.registerCommand("pi.showLog", () => pi.showLog()),
+		vscode.commands.registerCommand("pi.addSelection", () => pi.run(() => pi.addSelection())),
+		vscode.commands.registerCommand("pi.addFile", (uri?: vscode.Uri) => pi.run(() => pi.addFile(uri))),
+		vscode.commands.registerCommand("pi.addDiagnostics", () => pi.run(() => pi.addDiagnostics())),
 	);
 }
 

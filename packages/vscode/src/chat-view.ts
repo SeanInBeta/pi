@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import { type ChatAction, createChatState, diffChat, reduceChat } from "./chat-state.ts";
-import type { HostMessage, WebviewMessage } from "./chat-types.ts";
+import type { Attachment, HostMessage, WebviewMessage } from "./chat-types.ts";
 
 export interface ChatViewHandlers {
-	send(text: string): Promise<void>;
+	/** Send the typed text together with the composer draft. */
+	submit(text: string): Promise<void>;
 	abort(): Promise<void>;
 }
 
@@ -33,9 +34,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (message.type === "ready") {
 				this.post({ type: "reset", state: this.state });
 			} else if (message.type === "send") {
-				void this.handlers.send(message.text);
+				void this.handlers.submit(message.text);
 			} else if (message.type === "abort") {
 				void this.handlers.abort();
+			} else if (message.type === "removeAttachment") {
+				this.dispatch({ type: "draft_remove", ids: [message.id] });
 			}
 		});
 		view.onDidDispose(() => {
@@ -46,8 +49,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Clear the transcript, for example when a new pi process starts a new session. */
 	reset(): void {
-		this.state = createChatState();
+		this.state = reduceChat(this.state, { type: "session_reset" });
 		this.post({ type: "reset", state: this.state });
+	}
+
+	/** Attachments waiting in the composer. */
+	draft(): Attachment[] {
+		return this.state.draft;
 	}
 
 	dispatch(action: ChatAction): void {
@@ -77,6 +85,7 @@ function renderHtml(webview: vscode.Webview, assets: vscode.Uri): string {
 	<main id="transcript"></main>
 	<div id="status"></div>
 	<form id="composer">
+		<div id="draft" hidden></div>
 		<textarea id="input" rows="3" placeholder="Ask pi (Enter to send, Shift+Enter for a new line)"></textarea>
 		<div class="actions">
 			<button type="button" id="abort" class="secondary" hidden>Abort</button>

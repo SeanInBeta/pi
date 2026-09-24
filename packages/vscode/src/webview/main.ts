@@ -1,8 +1,13 @@
-import type { AssistantBlock, ChatItem, HostMessage, ToolRun, WebviewMessage } from "../chat-types.ts";
+import type { AssistantBlock, Attachment, ChatItem, HostMessage, ToolRun, WebviewMessage } from "../chat-types.ts";
 
 declare function acquireVsCodeApi(): { postMessage(message: WebviewMessage): void };
 
 const MAX_TOOL_OUTPUT = 10_000;
+const KIND_LABELS: Record<Attachment["kind"], string> = {
+	selection: "Selection",
+	file: "File",
+	diagnostics: "Problems",
+};
 
 const vscode = acquireVsCodeApi();
 const transcript = element<HTMLElement>("transcript");
@@ -11,6 +16,9 @@ const composer = element<HTMLFormElement>("composer");
 const input = element<HTMLTextAreaElement>("input");
 const sendButton = element<HTMLButtonElement>("send");
 const abortButton = element<HTMLButtonElement>("abort");
+const draftList = element<HTMLElement>("draft");
+
+let draft: Attachment[] = [];
 
 /** Rendered element per transcript item, in transcript order. */
 let rendered: HTMLElement[] = [];
@@ -32,16 +40,18 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
 			message.state.items.length,
 		);
 		setActivity(message.state.running, message.state.status, message.state.queued);
+		setDraft(message.state.draft);
 	} else {
 		queueItems(message.changed, message.length);
 		setActivity(message.running, message.status, message.queued);
+		setDraft(message.draft);
 	}
 });
 
 composer.addEventListener("submit", (event) => {
 	event.preventDefault();
 	const text = input.value.trim();
-	if (!text) return;
+	if (!text && draft.length === 0) return;
 	vscode.postMessage({ type: "send", text });
 	input.value = "";
 });
@@ -90,8 +100,39 @@ function setActivity(running: boolean, status: string | undefined, queued: numbe
 	sendButton.textContent = running ? "Steer" : "Send";
 }
 
+/** Composer chips for attachments that the next message will carry. */
+function setDraft(next: Attachment[]): void {
+	if (next === draft) return;
+	draft = next;
+	draftList.replaceChildren(
+		...draft.map((attachment) => {
+			const chip = create("span", "chip");
+			chip.title = attachment.note ? `${attachment.path} (${attachment.note})` : attachment.path;
+			const remove = create("button", "chip-remove", "\u00d7");
+			remove.title = "Remove";
+			remove.addEventListener("click", () => vscode.postMessage({ type: "removeAttachment", id: attachment.id }));
+			chip.append(
+				create("span", "chip-kind", KIND_LABELS[attachment.kind]),
+				create("span", "", attachment.label),
+				remove,
+			);
+			return chip;
+		}),
+	);
+	draftList.hidden = draft.length === 0;
+}
+
 function renderItem(item: ChatItem): HTMLElement {
-	if (item.kind === "user") return create("div", "message user", item.text);
+	if (item.kind === "user") {
+		const container = create("div", "message user");
+		if (item.attachments?.length) {
+			const list = create("div", "attachments");
+			list.append(...item.attachments.map(renderAttachment));
+			container.append(list);
+		}
+		if (item.text) container.append(create("div", "text", item.text));
+		return container;
+	}
 	if (item.kind === "error") return create("div", "message error", item.text);
 
 	const container = create("div", "message assistant");
@@ -120,6 +161,18 @@ function renderBlock(block: AssistantBlock, index: number, tools: Record<string,
 	summary.append(create("span", "tool-name", block.name), create("span", "tool-target", summarizeArgs(block.args)));
 	details.append(summary, create("pre", "args", block.args));
 	if (run?.output) details.append(create("pre", "output", truncate(run.output)));
+	return details;
+}
+
+function renderAttachment(attachment: Attachment, index: number): HTMLElement {
+	const details = document.createElement("details");
+	details.className = "attachment";
+	details.dataset.key = `attachment-${index}`;
+	const summary = create("summary", "");
+	summary.append(create("span", "chip-kind", KIND_LABELS[attachment.kind]), create("span", "", attachment.label));
+	details.append(summary);
+	if (attachment.note) details.append(create("div", "muted", attachment.note));
+	if (attachment.content) details.append(create("pre", "", truncate(attachment.content)));
 	return details;
 }
 

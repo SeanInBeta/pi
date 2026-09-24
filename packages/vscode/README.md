@@ -11,12 +11,39 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts on the first message. Each start begins a new session, so the transcript is cleared.
 
+## Editor context
+
+Attach context from the editor, then type a message (or send the attachments alone):
+
+| Command | Where | Attaches |
+|---|---|---|
+| `Pi: Add Selection to Pi Chat` | Editor context menu (with a selection), palette | Each non-empty selection with its line range |
+| `Pi: Add File to Pi Chat` | Editor and explorer context menus, palette | The file's current text, including unsaved edits. Files over 100,000 characters are attached by path only |
+| `Pi: Add Problems to Pi Chat` | Editor context menu, palette | Errors and warnings of the active file, or errors across the workspace when no file is active (at most 100) |
+
+Attachments appear as chips above the input and can be removed before sending. A sent message shows the typed text with its attachments as expandable chips. pi receives each attachment as a labeled block before the message, for example:
+
+````
+Selected code from src/a.ts lines 10-20:
+```typescript
+...
+```
+
+Problems reported by VS Code in src/a.ts:
+- src/a.ts:1:7 error [ts 2322]: Type 'string' is not assignable to type 'number'.
+  | const x: number = "oops";
+
+Why does this fail?
+````
+
 Code layout:
 
 | File | Role |
 |---|---|
 | `src/chat-state.ts` | Pure reducer from pi RPC events to transcript items, plus the diff sent to the webview |
 | `src/chat-view.ts` | Webview view provider; keeps the transcript and replays it when the webview reloads |
+| `src/editor-context.ts` | Builds attachments from selections, documents, and diagnostics |
+| `src/prompt-context.ts` | Formats attachments into the prompt text (pure, tested) |
 | `src/webview/main.ts` | Webview renderer (plain DOM, no framework), typechecked by `tsconfig.webview.json` |
 
 ## Commands
@@ -44,7 +71,15 @@ npm --prefix packages/vscode run build
 code --extensionDevelopmentPath="$PWD/packages/vscode" /path/to/project
 ```
 
-Run the tests (source launcher and chat reducer against the faux provider):
+To try the extension without an API key, point pi at the scripted provider in `test/fixtures/smoke-provider.ts` (user or workspace settings):
+
+```json
+"pi.args": ["--extension", "<repo>/packages/vscode/test/fixtures/smoke-provider.ts", "--provider", "smoke", "--model", "faux-1"]
+```
+
+Every message then gets thinking, a reply that lists the attached context blocks, and a `bash ls` tool call.
+
+Run the tests (source launcher, prompt formatting, and chat reducer against the faux provider):
 
 ```bash
 cd packages/vscode

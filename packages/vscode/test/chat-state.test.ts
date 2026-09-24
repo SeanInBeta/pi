@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { toJsonEvent } from "../../coding-agent/src/modes/json-event.ts";
 import { createHarness, type Harness } from "../../coding-agent/test/suite/harness.ts";
 import { type ChatAction, createChatState, diffChat, reduceChat } from "../src/chat-state.ts";
-import type { ChatItem, ChatState } from "../src/chat-types.ts";
+import type { Attachment, ChatItem, ChatState } from "../src/chat-types.ts";
+import { buildPrompt } from "../src/prompt-context.ts";
 
 const echoTool: AgentTool = {
 	name: "echo",
@@ -97,6 +98,46 @@ describe("chat state", () => {
 		const { state } = replay(actions);
 		expect(state.running).toBe(false);
 		expect(state.items.at(-1)).toMatchObject({ kind: "assistant", error: "invalid_api_key" });
+	});
+
+	it("shows a prompt built from attachments as the typed text plus its attachments", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+		const attachment: Attachment = {
+			id: "a1",
+			kind: "selection",
+			label: "a.ts:1",
+			path: "a.ts",
+			lines: { start: 1, end: 1 },
+			content: "const a = 1;",
+		};
+		const prompt = buildPrompt("What is a?", [attachment]);
+
+		await harness.session.prompt(prompt);
+
+		const { state } = replay([
+			{ type: "draft_add", attachments: [attachment] },
+			{ type: "prompt_sent", prompt, text: "What is a?", attachments: [attachment] },
+			{ type: "draft_remove", ids: ["a1"] },
+			...sessionActions(harness),
+		]);
+		expect(state.items[0]).toEqual({ kind: "user", text: "What is a?", attachments: [attachment] });
+		expect(state.draft).toEqual([]);
+		expect(state.sent).toEqual([]);
+	});
+
+	it("keeps the draft and sent prompts across a session reset", () => {
+		const attachment: Attachment = { id: "a1", kind: "file", label: "a.ts", path: "a.ts", content: "x" };
+		const { state } = replay([
+			{ type: "ui_error", message: "old" },
+			{ type: "draft_add", attachments: [attachment] },
+			{ type: "prompt_sent", prompt: "p", text: "t", attachments: [attachment] },
+			{ type: "session_reset" },
+		]);
+		expect(state.items).toEqual([]);
+		expect(state.draft).toEqual([attachment]);
+		expect(state.sent).toHaveLength(1);
 	});
 
 	it("appends extension errors and skips updates for ignored events", () => {
