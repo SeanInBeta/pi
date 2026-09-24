@@ -14,6 +14,8 @@ export type ChatAction =
 	| JsonAgentSessionEvent
 	/** An error outside pi's event stream, for example a rejected prompt. */
 	| { type: "ui_error"; message: string }
+	/** Transient status from the extension, for example a pending change review. */
+	| { type: "ui_status"; status: string | undefined }
 	/** A new pi session started. The transcript clears; the composer draft survives. */
 	| { type: "session_reset" }
 	| { type: "draft_add"; attachments: Attachment[] }
@@ -35,6 +37,8 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 	switch (action.type) {
 		case "ui_error":
 			return appendItem(state, { kind: "error", text: action.message });
+		case "ui_status":
+			return { ...state, status: action.status };
 		case "session_reset":
 			return { ...createChatState(), draft: state.draft, sent: state.sent };
 		case "draft_add":

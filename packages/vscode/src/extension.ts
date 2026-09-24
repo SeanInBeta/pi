@@ -1,8 +1,11 @@
+import { join } from "node:path";
 import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
 import type { Attachment } from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
+import { ExtensionUIBridge } from "./extension-ui.ts";
+import { ACCEPT, REJECT } from "./file-change.ts";
 import { createPiClient } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
 import { forkItems, modelItems, type PickItem, sessionItems, thinkingLevelItems } from "./quick-picks.ts";
@@ -12,6 +15,7 @@ type PiStatus = "stopped" | "starting" | "idle" | "working";
 /** Owns one pi RPC process for the first workspace folder, feeds its events to the chat view, and logs them. */
 class PiController implements vscode.Disposable {
 	readonly chat: ChatViewProvider;
+	readonly ui: ExtensionUIBridge;
 	private readonly extensionPath: string;
 	private readonly output = vscode.window.createOutputChannel("Pi");
 	private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
@@ -27,6 +31,12 @@ class PiController implements vscode.Disposable {
 		this.chat = new ChatViewProvider(extensionUri, {
 			submit: (text) => this.run(() => this.submit(text)),
 			abort: () => this.run(() => this.abort()),
+		});
+		this.ui = new ExtensionUIBridge({
+			respond: (response) => this.client?.sendExtensionUIResponse(response),
+			setInput: (text) => this.chat.setInput(text),
+			setStatus: (status) => this.chat.dispatch({ type: "ui_status", status }),
+			log: (line) => this.output.appendLine(line),
 		});
 		this.statusItem.command = "pi.showLog";
 		this.setStatus("stopped");
@@ -48,6 +58,7 @@ class PiController implements vscode.Disposable {
 		const client = this.client ?? (await this.starting?.catch(() => undefined));
 		this.client = undefined;
 		if (!client) return;
+		this.ui.cancelAll();
 		await client.stop();
 		this.output.appendLine("pi stopped");
 		this.setStatus("stopped");
@@ -246,6 +257,7 @@ class PiController implements vscode.Disposable {
 
 	/** The process is stopped by deactivate(), which VS Code awaits. */
 	dispose(): void {
+		this.ui.dispose();
 		this.statusItem.dispose();
 		this.modelItem.dispose();
 		this.output.dispose();
@@ -256,11 +268,24 @@ class PiController implements vscode.Disposable {
 		if (!cwd) throw new Error("Open a folder before starting pi");
 
 		const config = vscode.workspace.getConfiguration("pi");
+		const reviewArgs = config.get<boolean>("reviewChanges", true)
+			? ["--extension", join(this.extensionPath, "src", "pi-extension", "review-changes.ts")]
+			: [];
 		const client = createPiClient({
 			extensionPath: this.extensionPath,
 			cwd,
 			cliPath: config.get<string>("cliPath") || undefined,
-			args: config.get<string[]>("args"),
+			args: [...reviewArgs, ...(config.get<string[]>("args") ?? [])],
+		});
+		client.onExtensionUIRequest((request) => {
+			// Metadata can hold whole files; keep the log readable.
+			this.output.appendLine(
+				JSON.stringify({
+					...request,
+					metadata: "metadata" in request && request.metadata ? "[metadata]" : undefined,
+				}),
+			);
+			this.ui.handle(request);
 		});
 		// A new process starts a new session, so the transcript starts empty.
 		this.chat.reset();
@@ -268,7 +293,11 @@ class PiController implements vscode.Disposable {
 			this.output.appendLine(JSON.stringify(event));
 			this.chat.dispatch(event);
 			if (event.type === "agent_start") this.setStatus("working");
-			if (event.type === "agent_settled") this.setStatus("idle");
+			if (event.type === "agent_settled") {
+				this.setStatus("idle");
+				// Dialogs of the finished run (for example a review cut off by Abort) are already resolved by pi.
+				this.ui.cancelAll();
+			}
 			if (event.type === "session_info_changed") this.chat.setDescription(event.name);
 			if (event.type === "thinking_level_changed") {
 				this.thinkingLevel = event.level;
@@ -319,6 +348,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand("pi.addSelection", () => pi.run(() => pi.addSelection())),
 		vscode.commands.registerCommand("pi.addFile", (uri?: vscode.Uri) => pi.run(() => pi.addFile(uri))),
 		vscode.commands.registerCommand("pi.addDiagnostics", () => pi.run(() => pi.addDiagnostics())),
+		vscode.commands.registerCommand("pi.acceptChange", () => pi.ui.resolveReview(ACCEPT)),
+		vscode.commands.registerCommand("pi.rejectChange", () => pi.ui.resolveReview(REJECT)),
 		vscode.commands.registerCommand("pi.newSession", () => pi.run(() => pi.newSession())),
 		vscode.commands.registerCommand("pi.switchSession", () => pi.run(() => pi.switchSession())),
 		vscode.commands.registerCommand("pi.forkSession", () => pi.run(() => pi.forkSession())),

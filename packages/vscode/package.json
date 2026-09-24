@@ -104,6 +104,20 @@
 				"command": "pi.selectThinkingLevel",
 				"title": "Select Thinking Level",
 				"category": "Pi"
+			},
+			{
+				"command": "pi.acceptChange",
+				"title": "Accept Proposed Change",
+				"category": "Pi",
+				"icon": "$(check)",
+				"enablement": "pi.reviewPending"
+			},
+			{
+				"command": "pi.rejectChange",
+				"title": "Reject Proposed Change",
+				"category": "Pi",
+				"icon": "$(close)",
+				"enablement": "pi.reviewPending"
 			}
 		],
 		"menus": {
@@ -170,6 +184,18 @@
 					"when": "view == pi.chat",
 					"group": "3_process@2"
 				}
+			],
+			"editor/title": [
+				{
+					"command": "pi.acceptChange",
+					"when": "pi.reviewPending && resourceScheme == pi-proposed",
+					"group": "navigation@1"
+				},
+				{
+					"command": "pi.rejectChange",
+					"when": "pi.reviewPending && resourceScheme == pi-proposed",
+					"group": "navigation@2"
+				}
 			]
 		},
 		"configuration": {
@@ -187,6 +213,11 @@
 					},
 					"default": [],
 					"description": "Extra pi CLI arguments, for example [\"--provider\", \"anthropic\"]."
+				},
+				"pi.reviewChanges": {
+					"type": "boolean",
+					"default": true,
+					"description": "Review every edit and write in a diff editor and accept or reject it before pi changes the file. Takes effect when pi starts."
 				}
 			}
 		}

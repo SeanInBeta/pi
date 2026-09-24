@@ -29,10 +29,37 @@ const CONTEXT_HEADER = /^(Selected code from|File |Problems reported)/;
 
 const respond: FauxResponseFactory = (context) => {
 	const last = context.messages.at(-1);
-	if (last?.role === "toolResult") return fauxAssistantMessage(FINAL_REPLY);
+	if (last?.role === "toolResult") {
+		return last.isError
+			? fauxAssistantMessage(
+					`The tool failed: ${last.content.map((part) => (part.type === "text" ? part.text : "")).join(" ")}`,
+				)
+			: fauxAssistantMessage(FINAL_REPLY);
+	}
 	const content = last?.role === "user" ? last.content : "";
 	const text =
 		typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+	// "smoke:write [path]" and "smoke:edit" exercise the file tools, for example the VS Code change review.
+	const write = /smoke:write(?:\s+(\S+))?/.exec(text);
+	if (write) {
+		const path = write[1] ?? "pi-smoke.txt";
+		return fauxAssistantMessage(
+			[fauxText(`Writing ${path}.`), fauxToolCall("write", { path, content: "Hello from pi\n" })],
+			{ stopReason: "toolUse" },
+		);
+	}
+	if (text.includes("smoke:edit")) {
+		return fauxAssistantMessage(
+			[
+				fauxText("Editing sample.ts."),
+				fauxToolCall("edit", {
+					path: "sample.ts",
+					edits: [{ oldText: "return a + b;", newText: "return a + b; // reviewed" }],
+				}),
+			],
+			{ stopReason: "toolUse" },
+		);
+	}
 	const headers = text.split("\n").filter((line) => CONTEXT_HEADER.test(line));
 	return fauxAssistantMessage(
 		[
@@ -57,4 +84,16 @@ export default function (pi: ExtensionAPI): void {
 	});
 	faux.setResponses(Array.from({ length: 1000 }, () => respond));
 	pi.registerProvider(faux.provider);
+
+	// "/smoke-ui" exercises the generic extension UI dialogs.
+	pi.registerCommand("smoke-ui", {
+		description: "Show confirm, select and input dialogs and report the answers",
+		handler: async (_args, ctx) => {
+			const confirmed = await ctx.ui.confirm("Smoke confirm", "Continue with the smoke dialogs?");
+			const color = await ctx.ui.select("Smoke select", ["red", "green", "blue"]);
+			const text = await ctx.ui.input("Smoke input", "type something");
+			ctx.ui.setStatus("smoke", `smoke: ${color ?? "none"}`);
+			ctx.ui.notify(`confirm=${confirmed} select=${color} input=${text}`, "info");
+		},
+	});
 }
