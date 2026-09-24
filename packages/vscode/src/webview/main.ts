@@ -1,4 +1,5 @@
 import type { AssistantBlock, Attachment, ChatItem, HostMessage, ToolRun, WebviewMessage } from "../chat-types.ts";
+import { renderMarkdown } from "./markdown.ts";
 
 declare function acquireVsCodeApi(): { postMessage(message: WebviewMessage): void };
 
@@ -145,7 +146,11 @@ function renderItem(item: ChatItem): HTMLElement {
 }
 
 function renderBlock(block: AssistantBlock, index: number, tools: Record<string, ToolRun>): HTMLElement {
-	if (block.type === "text") return create("div", "text", block.text);
+	if (block.type === "text") {
+		const text = create("div", "text markdown");
+		text.append(renderMarkdown(block.text));
+		return text;
+	}
 
 	const details = document.createElement("details");
 	details.dataset.key = String(index);

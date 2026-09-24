@@ -14,11 +14,22 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "../../../coding-agent/src/core/extensions/types.ts";
 
+const FINAL_REPLY = [
+	"## Result",
+	"The command finished. **Smoke test complete.**",
+	"",
+	"- Markdown *lists* with `inline code`",
+	"- A [link](https://example.com)",
+	"",
+	"```ts",
+	"const answer: number = 42;",
+	"```",
+].join("\n");
 const CONTEXT_HEADER = /^(Selected code from|File |Problems reported)/;
 
 const respond: FauxResponseFactory = (context) => {
 	const last = context.messages.at(-1);
-	if (last?.role === "toolResult") return fauxAssistantMessage("The command finished. Smoke test complete.");
+	if (last?.role === "toolResult") return fauxAssistantMessage(FINAL_REPLY);
 	const content = last?.role === "user" ? last.content : "";
 	const text =
 		typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("\n");

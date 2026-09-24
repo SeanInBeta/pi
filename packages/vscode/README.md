@@ -7,7 +7,7 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 ## Chat panel
 
 - Enter sends, Shift+Enter inserts a new line. While pi is working, Send becomes Steer and queues a steering message.
-- Assistant text streams in as plain text. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
+- Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts on the first message. Each start begins a new session, so the transcript is cleared.
 
@@ -45,6 +45,7 @@ Code layout:
 | `src/editor-context.ts` | Builds attachments from selections, documents, and diagnostics |
 | `src/prompt-context.ts` | Formats attachments into the prompt text (pure, tested) |
 | `src/webview/main.ts` | Webview renderer (plain DOM, no framework), typechecked by `tsconfig.webview.json` |
+| `src/webview/markdown.ts` | Markdown to DOM using only `marked`'s lexer; nodes are built with `textContent`, never `innerHTML` |
 
 ## Commands
 
@@ -90,4 +91,3 @@ node ../../node_modules/vitest/dist/cli.js --run
 
 - Extension UI dialogs (`extension_ui_request`) are only logged. A pi extension that waits on a dialog without a timeout blocks until pi is stopped.
 - If the pi process exits unexpectedly, run `Pi: Stop` and then `Pi: Start`.
-- Markdown is not rendered yet.
