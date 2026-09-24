@@ -128,6 +128,37 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		await session.stop();
 	}
 
+	/** Close the tab and move its session file to the trash, after confirmation. */
+	async deleteSession(id: string | undefined): Promise<void> {
+		const session = this.sessions.find((candidate) => candidate.id === id) ?? this.active;
+		const file = session.info.sessionFile;
+		const choice = await vscode.window.showWarningMessage(
+			`Delete the session "${session.title}"?`,
+			{
+				modal: true,
+				detail: file ? `The session file is moved to the trash:\n${file}` : "This session has not been saved yet.",
+			},
+			"Delete",
+		);
+		if (choice !== "Delete") return;
+		await this.closeTab(session.id);
+		if (!file) return;
+		const uri = vscode.Uri.file(file);
+		try {
+			await vscode.workspace.fs.delete(uri, { useTrash: true });
+			return;
+		} catch (error) {
+			this.output.appendLine(`trash unavailable: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		// Remote file systems may have no trash; a permanent delete needs its own confirmation.
+		const permanent = await vscode.window.showWarningMessage(
+			"The trash is not available here. Delete the session file permanently?",
+			{ modal: true, detail: file },
+			"Delete Permanently",
+		);
+		if (permanent === "Delete Permanently") await vscode.workspace.fs.delete(uri);
+	}
+
 	async switchTab(id: string | undefined): Promise<void> {
 		const session = this.sessions.find((candidate) => candidate.id === id);
 		if (session) await this.activate(session);
@@ -181,6 +212,8 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				return this.newTab();
 			case "closeTab":
 				return this.closeTab(arg);
+			case "deleteSession":
+				return this.deleteSession(arg);
 			case "switchTab":
 				return this.switchTab(arg);
 			case "openSession":

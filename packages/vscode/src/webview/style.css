@@ -197,13 +197,47 @@ button {
 
 /* Chat tabs */
 
+/* The tab strip scrolls sideways; #tab-scroll below the header is its navigation bar. */
 .tabs {
 	display: flex;
 	flex: 1;
 	min-width: 0;
 	gap: 2px;
 	overflow-x: auto;
+	overflow-y: hidden;
 	scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+	display: none;
+}
+
+.tab-scroll {
+	position: relative;
+	height: 4px;
+	margin: 0 8px 2px;
+	border-radius: 2px;
+	background: color-mix(in srgb, var(--vscode-scrollbarSlider-background, #79797966) 40%, transparent);
+	cursor: pointer;
+}
+
+.tab-scroll[hidden] {
+	display: none;
+}
+
+.tab-scroll-thumb {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	min-width: 16px;
+	border-radius: 2px;
+	background: var(--vscode-scrollbarSlider-activeBackground, #bfbfbf66);
+	cursor: grab;
+	touch-action: none;
+}
+
+.tab-scroll-thumb:hover {
+	background: var(--vscode-scrollbarSlider-hoverBackground, #646464b3);
 }
 
 .tabs[hidden] {
@@ -435,11 +469,12 @@ button {
 	word-break: normal;
 }
 
+/* The layer draws the text (so tokens can be colored); the textarea on top only shows the caret and selection. */
 #input-highlight {
 	position: absolute;
 	inset: 0;
 	overflow: hidden;
-	color: transparent;
+	color: var(--vscode-input-foreground);
 	pointer-events: none;
 }
 
@@ -449,32 +484,31 @@ button {
 	min-height: 2.8em;
 	max-height: 240px;
 	resize: none;
-	color: var(--vscode-input-foreground);
+	color: transparent;
+	caret-color: var(--vscode-input-foreground);
 	background: transparent;
 	border: none;
 	outline: none;
 }
 
+#input::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+}
+
+/* Tokens are colored and emboldened with a text stroke, which keeps glyph widths (and the caret) aligned. */
 .token {
 	border-radius: 3px;
+	-webkit-text-stroke: 0.4px currentColor;
 }
 
 .token-mention {
-	background: color-mix(in srgb, var(--vscode-textLink-foreground) 22%, transparent);
+	color: var(--vscode-textLink-foreground);
+	background: color-mix(in srgb, var(--vscode-textLink-foreground) 18%, transparent);
 }
 
 .token-command {
-	background: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 28%, transparent);
-}
-
-.message.user .token-mention {
-	color: var(--vscode-textLink-foreground);
-	background: transparent;
-}
-
-.message.user .token-command {
 	color: var(--vscode-charts-purple, #b180d7);
-	background: transparent;
+	background: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 20%, transparent);
 }
 
 .toolbar {
@@ -826,9 +860,17 @@ button {
 	appearance: none;
 }
 
+/* VS Code's webview styles outline every focused control; the slider shows focus with its knob instead. */
+.effort :focus,
+.effort :focus-visible,
 #effort-range:focus,
 #effort-range:focus-visible {
-	outline: none;
+	outline: none !important;
+	box-shadow: none;
+}
+
+#effort-range:focus-visible::-webkit-slider-thumb {
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-button-background) 45%, transparent);
 }
 
 .effort-none {

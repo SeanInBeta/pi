@@ -54,6 +54,9 @@ export class Controls {
 	private readonly modelLabel = element<HTMLElement>("model-label");
 	private readonly approvalLabel = element<HTMLElement>("approval-label");
 	private readonly highlight = element<HTMLElement>("input-highlight");
+	private readonly tabScroll = element<HTMLElement>("tab-scroll");
+	private readonly tabScrollThumb = element<HTMLElement>("tab-scroll-thumb");
+	private shownTabId: string | undefined;
 	private readonly effort = element<HTMLElement>("effort");
 	private readonly effortRange = element<HTMLInputElement>("effort-range");
 
@@ -128,10 +131,60 @@ export class Controls {
 				close.append(trashIcon());
 				close.addEventListener("click", () => this.command("closeTab", tab.id));
 				wrapper.append(main, close);
+				// Right-click opens the session menu for that tab, like a terminal tab's context menu.
+				wrapper.addEventListener("contextmenu", (event) => {
+					event.preventDefault();
+					if (!tab.active) this.command("switchTab", tab.id);
+					this.openSessions();
+				});
 				return wrapper;
 			}),
 		);
-		this.tabs.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+		// Scroll only when another tab became active, so status updates do not undo the user's scrolling.
+		const activeId = this.activeTabId();
+		if (activeId !== this.shownTabId) {
+			this.shownTabId = activeId;
+			this.tabs.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+		}
+		this.updateTabScroll();
+	}
+
+	/** Size and place the navigation bar under the tabs; it shows only when the tabs overflow. */
+	private updateTabScroll(): void {
+		const { scrollWidth, clientWidth, scrollLeft } = this.tabs;
+		const overflowing = scrollWidth > clientWidth + 1 && !this.tabs.hidden;
+		this.tabScroll.hidden = !overflowing;
+		if (!overflowing) return;
+		this.tabScrollThumb.style.width = `${(clientWidth / scrollWidth) * 100}%`;
+		this.tabScrollThumb.style.left = `${(scrollLeft / scrollWidth) * 100}%`;
+	}
+
+	private bindTabScroll(): void {
+		this.tabs.addEventListener("scroll", () => this.updateTabScroll());
+		new ResizeObserver(() => this.updateTabScroll()).observe(this.tabs);
+		// Drag the thumb to scroll; click the track to jump there.
+		this.tabScrollThumb.addEventListener("pointerdown", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			this.tabScrollThumb.setPointerCapture(event.pointerId);
+			const startX = event.clientX;
+			const startLeft = this.tabs.scrollLeft;
+			const ratio = this.tabs.scrollWidth / this.tabScroll.clientWidth;
+			const move = (moveEvent: PointerEvent) => {
+				this.tabs.scrollLeft = startLeft + (moveEvent.clientX - startX) * ratio;
+			};
+			const up = () => {
+				this.tabScrollThumb.removeEventListener("pointermove", move);
+				this.tabScrollThumb.removeEventListener("pointerup", up);
+			};
+			this.tabScrollThumb.addEventListener("pointermove", move);
+			this.tabScrollThumb.addEventListener("pointerup", up);
+		});
+		this.tabScroll.addEventListener("pointerdown", (event) => {
+			const rect = this.tabScroll.getBoundingClientRect();
+			const fraction = (event.clientX - rect.left) / rect.width;
+			this.tabs.scrollLeft = fraction * this.tabs.scrollWidth - this.tabs.clientWidth / 2;
+		});
 	}
 
 	setActivity(running: boolean, status: string | undefined, queued: number): void {
@@ -225,6 +278,17 @@ export class Controls {
 		});
 
 		element("new-tab").addEventListener("click", () => this.command("newTab"));
+		this.bindTabScroll();
+		// A vertical mouse wheel scrolls the tab strip sideways.
+		this.tabs.addEventListener(
+			"wheel",
+			(event) => {
+				if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+				this.tabs.scrollLeft += event.deltaY;
+				event.preventDefault();
+			},
+			{ passive: false },
+		);
 		element("history").addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
 		element("model").addEventListener("click", () => (this.effort.hidden ? this.openEffort() : this.closeEffort()));
 		element("effort-title").addEventListener("click", () => {
@@ -389,8 +453,15 @@ export class Controls {
 
 	private openSessions(): void {
 		const actions: MenuItem[] = [
-			{ label: "Fork from an earlier message...", value: "action:fork" },
+			{ label: "New session", description: "Open a new tab", value: "action:new" },
 			{ label: "Rename session...", value: "action:rename" },
+			{ label: "Fork from an earlier message...", value: "action:fork" },
+			{ label: "Close tab", description: "Stop this tab's pi; the session stays saved", value: "action:close" },
+			{
+				label: "Delete session...",
+				description: "Close the tab and move the session file to the trash",
+				value: "action:delete",
+			},
 		];
 		this.headerMenu.open({
 			sections: [{ items: actions }, { title: "Recent sessions (open in a tab)", items: [] }],
@@ -400,7 +471,10 @@ export class Controls {
 			onSelect: (item) => {
 				const [kind, value] = splitValue(item.value);
 				if (kind === "session") this.command("openSession", value);
+				else if (value === "new") this.command("newTab");
 				else if (value === "fork") this.openForks();
+				else if (value === "close") this.command("closeTab", this.activeTabId());
+				else if (value === "delete") this.command("deleteSession", this.activeTabId());
 				else this.startRename();
 			},
 		});
@@ -413,6 +487,10 @@ export class Controls {
 				},
 			]),
 		);
+	}
+
+	private activeTabId(): string | undefined {
+		return this.meta.tabs.find((tab) => tab.active)?.id;
 	}
 
 	private openForks(): void {
@@ -527,6 +605,7 @@ export class Controls {
 		this.headerMenu.close();
 		this.renameInput.value = this.meta.sessionName ?? "";
 		this.tabs.hidden = true;
+		this.updateTabScroll();
 		this.renameInput.hidden = false;
 		this.renameInput.focus();
 		this.renameInput.select();
@@ -535,6 +614,7 @@ export class Controls {
 	private finishRename(): void {
 		this.renameInput.hidden = true;
 		this.tabs.hidden = false;
+		this.updateTabScroll();
 	}
 
 	private toggle(menu: Menu, open: () => void): void {

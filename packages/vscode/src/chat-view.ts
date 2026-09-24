@@ -117,13 +117,14 @@ function renderHtml(webview: vscode.Webview, assets: vscode.Uri): string {
 </head>
 <body>
 	<header id="header">
-		<div id="tabs" class="tabs" role="tablist"></div>
+		<div id="tabs" class="tabs" role="tablist" aria-label="Chat tabs"></div>
 		<input id="rename" class="rename" hidden placeholder="Session name">
 		<div class="header-actions">
 			<button type="button" id="new-tab" class="icon-button" title="New chat tab">${ICONS.plus}</button>
 			<button type="button" id="history" class="icon-button" title="Sessions" data-menu-trigger>${ICONS.history}</button>
 		</div>
 	</header>
+	<div id="tab-scroll" class="tab-scroll" hidden title="Scroll tabs"><div id="tab-scroll-thumb" class="tab-scroll-thumb"></div></div>
 	<div id="header-menu" class="menu"></div>
 	<main id="transcript"></main>
 	<div id="status"></div>

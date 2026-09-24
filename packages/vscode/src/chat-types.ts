@@ -84,6 +84,7 @@ export type PanelMenu = "sessions" | "models" | "thinking" | "forks" | "rename";
 export type PanelCommand =
 	| "newTab"
 	| "closeTab"
+	| "deleteSession"
 	| "switchTab"
 	| "setApprovalMode"
 	| "newSession"
