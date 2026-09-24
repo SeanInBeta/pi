@@ -6,7 +6,9 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 
 ## Chat panel
 
-- Enter sends, Shift+Enter inserts a new line. While pi is working, Send becomes Steer and queues a steering message.
+- The panel header shows the session name (or its first message) with New Session and session menu buttons. Session and model choices open as menus inside the panel, not in VS Code's quick pick.
+- The composer has a `+` menu (attach selection, current file, problems, mention a file), a model chip (model and thinking level), and a round send button. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
+- `/` at the start of the input lists commands: the built-ins below, then pi's extension, prompt template and skill commands. `@` lists workspace files (fuzzy match, same matcher as pi's terminal UI) and inserts `@path`, like the terminal UI.
 - Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts on the first message. Each start begins a new session, so the transcript is cleared.
@@ -42,18 +44,23 @@ Dialogs are shown one at a time. When pi resolves a dialog itself (timeout, abor
 
 ## Sessions and models
 
-pi saves sessions as usual (disable with `"pi.args": ["--no-session"]`). The chat view title bar has New Session, Switch Session and Select Model buttons; the `...` menu adds Fork Session, Rename Session, Select Thinking Level, Stop and Show Log. All are also in the command palette under `Pi:`.
+pi saves sessions as usual (disable with `"pi.args": ["--no-session"]`). The session menu (header title or history button) has New Session, Fork, Rename and the saved sessions of this folder, newest first. The model chip opens the model and thinking level menu. Palette commands (`Pi: Switch Session`, `Pi: Select Model`, ...) and the status bar model item open the same in-panel menus.
+
+Built-in slash commands, handled by the extension like pi's terminal UI handles them:
 
 | Command | Action |
 |---|---|
-| `Pi: New Session` | Start an empty session |
-| `Pi: Switch Session` | Pick a saved session of this folder (newest first) and load its transcript |
-| `Pi: Fork Session` | Pick an earlier user message; pi starts a new session from before it and the message returns to the composer for editing |
-| `Pi: Rename Session` | Set the session name, shown next to the view title |
-| `Pi: Select Model` | Pick from the models pi has credentials for |
-| `Pi: Select Thinking Level` | Pick from the levels the current model supports |
+| `/new` | Start an empty session |
+| `/resume` | Open the session menu |
+| `/model [provider/model]` | Open the model menu, or switch directly |
+| `/thinking [level]` | Open the model menu, or set the level directly |
+| `/fork` | Pick an earlier user message; pi starts a new session from before it and the message returns to the composer |
+| `/clone` | Duplicate the current session |
+| `/name [name]` | Rename inline in the header, or set the name directly |
+| `/compact [instructions]` | Compact the session context |
+| `/copy` | Copy the last assistant message |
 
-The status bar shows the model and thinking level; clicking it opens Select Model. Session commands are refused while pi is working. When `pi.args` resumes a session (`--continue`, `--session`), its transcript loads on start.
+Other `/` commands are sent to pi. Session commands are refused while pi is working. When `pi.args` resumes a session (`--continue`, `--session`), its transcript loads on start.
 
 Saved sessions are listed through the `list_sessions` RPC command, which this branch adds to pi.
 

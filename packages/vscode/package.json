@@ -143,48 +143,6 @@
 					"group": "pi@1"
 				}
 			],
-			"view/title": [
-				{
-					"command": "pi.newSession",
-					"when": "view == pi.chat",
-					"group": "navigation@1"
-				},
-				{
-					"command": "pi.switchSession",
-					"when": "view == pi.chat",
-					"group": "navigation@2"
-				},
-				{
-					"command": "pi.selectModel",
-					"when": "view == pi.chat",
-					"group": "navigation@3"
-				},
-				{
-					"command": "pi.forkSession",
-					"when": "view == pi.chat",
-					"group": "1_session@1"
-				},
-				{
-					"command": "pi.renameSession",
-					"when": "view == pi.chat",
-					"group": "1_session@2"
-				},
-				{
-					"command": "pi.selectThinkingLevel",
-					"when": "view == pi.chat",
-					"group": "2_model@1"
-				},
-				{
-					"command": "pi.stop",
-					"when": "view == pi.chat",
-					"group": "3_process@1"
-				},
-				{
-					"command": "pi.showLog",
-					"when": "view == pi.chat",
-					"group": "3_process@2"
-				}
-			],
 			"editor/title": [
 				{
 					"command": "pi.acceptChange",

@@ -1,14 +1,14 @@
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
-import type { Attachment } from "./chat-types.ts";
+import type { Attachment, MenuItem, MenuQuery, PanelCommand, PanelMenu, PanelMeta } from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
 import { ExtensionUIBridge } from "./extension-ui.ts";
 import { ACCEPT, REJECT } from "./file-change.ts";
 import { createPiClient } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
-import { forkItems, modelItems, type PickItem, sessionItems, thinkingLevelItems } from "./quick-picks.ts";
+import { commandItems, fileItems, forkItems, modelItems, sessionItems } from "./quick-picks.ts";
 
 type PiStatus = "stopped" | "starting" | "idle" | "working";
 
@@ -20,8 +20,8 @@ class PiController implements vscode.Disposable {
 	private readonly output = vscode.window.createOutputChannel("Pi");
 	private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
 	private readonly modelItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-	private model: { provider: string; id: string } | undefined;
-	private thinkingLevel = "";
+	private meta: PanelMeta = { started: false, thinkingLevels: [] };
+	private files: { at: number; paths: string[] } | undefined;
 	private client: RpcClient | undefined;
 	private starting: Promise<RpcClient> | undefined;
 	private status: PiStatus = "stopped";
@@ -31,6 +31,15 @@ class PiController implements vscode.Disposable {
 		this.chat = new ChatViewProvider(extensionUri, {
 			submit: (text) => this.run(() => this.submit(text)),
 			abort: () => this.run(() => this.abort()),
+			query: async (query, text) => {
+				try {
+					return await this.query(query, text);
+				} catch (error) {
+					this.report(error);
+					return [];
+				}
+			},
+			command: (command, arg) => this.run(() => this.command(command, arg)),
 		});
 		this.ui = new ExtensionUIBridge({
 			respond: (response) => this.client?.sendExtensionUIResponse(response),
@@ -62,7 +71,7 @@ class PiController implements vscode.Disposable {
 		await client.stop();
 		this.output.appendLine("pi stopped");
 		this.setStatus("stopped");
-		this.modelItem.hide();
+		this.setMeta({ ...this.meta, started: false });
 		// A run cut off by stopping never emits agent_settled.
 		this.chat.dispatch({ type: "agent_settled" });
 	}
@@ -137,67 +146,115 @@ class PiController implements vscode.Disposable {
 		await this.refreshState(client);
 	}
 
-	async switchSession(): Promise<void> {
-		const client = await this.idleClient();
-		const [sessions, state] = await Promise.all([client.listSessions(), client.getState()]);
-		if (sessions.length === 0) {
-			void vscode.window.showInformationMessage("Pi: no saved sessions for this folder yet.");
-			return;
+	/** Items for an in-panel menu. */
+	async query(query: MenuQuery, text: string): Promise<MenuItem[]> {
+		if (query === "files") return fileItems(await this.workspaceFiles(), text);
+		const client = await this.start();
+		switch (query) {
+			case "sessions": {
+				const [sessions, state] = await Promise.all([client.listSessions(), client.getState()]);
+				return sessionItems(sessions, state.sessionFile);
+			}
+			case "models":
+				return modelItems(await client.getAvailableModels(), this.meta.model);
+			case "forks":
+				return forkItems(await client.getForkMessages());
+			case "commands":
+				return commandItems(await client.getCommands());
 		}
-		const pick = await this.pick(sessionItems(sessions, state.sessionFile), "Switch to a session");
-		if (!pick || pick.value === state.sessionFile) return;
-		if ((await client.switchSession(pick.value)).cancelled) return;
-		await this.reload(client);
 	}
 
-	/** Start a new session from before an earlier user message, and put that message back in the composer. */
-	async forkSession(): Promise<void> {
-		const client = await this.idleClient();
-		const messages = await client.getForkMessages();
-		if (messages.length === 0) {
-			void vscode.window.showInformationMessage("Pi: no messages to fork from yet.");
-			return;
+	/** Actions from the panel's menus, buttons and built-in slash commands. */
+	async command(command: PanelCommand, arg: string | undefined): Promise<void> {
+		switch (command) {
+			case "newSession":
+				return this.newSession();
+			case "switchSession": {
+				const client = await this.idleClient();
+				if (!arg || (await client.switchSession(arg)).cancelled) return;
+				return this.reload(client);
+			}
+			case "fork": {
+				// Forking starts a new session from before the chosen message and returns that message for editing.
+				const client = await this.idleClient();
+				if (!arg) return;
+				const result = await client.fork(arg);
+				if (result.cancelled) return;
+				await this.reload(client);
+				this.chat.setInput(result.text);
+				return;
+			}
+			case "clone": {
+				const client = await this.idleClient();
+				if ((await client.clone()).cancelled) return;
+				return this.reload(client);
+			}
+			case "rename": {
+				const client = await this.start();
+				if (!arg?.trim()) return;
+				await client.setSessionName(arg.trim());
+				return this.refreshState(client);
+			}
+			case "setModel": {
+				const client = await this.start();
+				const model = await this.resolveModel(client, arg ?? "");
+				await client.setModel(model.provider, model.id);
+				return this.refreshState(client);
+			}
+			case "setThinking": {
+				const client = await this.start();
+				const level = this.meta.thinkingLevels.find((candidate) => candidate === arg?.trim());
+				if (!level)
+					throw new Error(
+						`Unknown thinking level "${arg ?? ""}". Available: ${this.meta.thinkingLevels.join(", ")}`,
+					);
+				await client.setThinkingLevel(level as Parameters<RpcClient["setThinkingLevel"]>[0]);
+				return this.refreshState(client);
+			}
+			case "compact": {
+				const client = await this.idleClient();
+				await client.compact(arg?.trim() || undefined);
+				return this.reload(client);
+			}
+			case "copyLast": {
+				const text = await (await this.start()).getLastAssistantText();
+				if (!text) throw new Error("No assistant message to copy yet.");
+				await vscode.env.clipboard.writeText(text);
+				void vscode.window.showInformationMessage("Pi: copied the last assistant message.");
+				return;
+			}
+			case "attachSelection":
+				return this.addSelection();
+			case "attachFile":
+				return this.addFile();
+			case "attachProblems":
+				return this.addDiagnostics();
 		}
-		const pick = await this.pick(forkItems(messages), "Fork from before this message");
-		if (!pick) return;
-		const result = await client.fork(pick.value);
-		if (result.cancelled) return;
-		await this.reload(client);
+	}
+
+	/** Open an in-panel menu, for palette commands and the status bar. */
+	async openMenu(menu: PanelMenu): Promise<void> {
 		await this.focusChat();
-		this.chat.setInput(result.text);
+		this.chat.openMenu(menu);
 	}
 
-	async renameSession(): Promise<void> {
-		const client = await this.start();
-		const state = await client.getState();
-		const name = await vscode.window.showInputBox({ prompt: "Session name", value: state.sessionName ?? "" });
-		if (!name?.trim()) return;
-		await client.setSessionName(name);
-		await this.refreshState(client);
-	}
-
-	async selectModel(): Promise<void> {
-		const client = await this.start();
+	/** Accept a menu value (`{"provider","id"}` JSON) or a typed `provider/id` or model id. */
+	private async resolveModel(client: RpcClient, arg: string): Promise<{ provider: string; id: string }> {
+		if (arg.startsWith("{")) return JSON.parse(arg) as { provider: string; id: string };
 		const models = await client.getAvailableModels();
-		if (models.length === 0) {
-			void vscode.window.showInformationMessage(
-				"Pi: no models available. Log in to a provider with the pi CLI first.",
-			);
-			return;
-		}
-		const pick = await this.pick(modelItems(models, this.model), "Select a model");
-		if (!pick) return;
-		await client.setModel(pick.value.provider, pick.value.id);
-		await this.refreshState(client);
+		const match =
+			models.find((model) => `${model.provider}/${model.id}` === arg) ?? models.find((model) => model.id === arg);
+		if (!match) throw new Error(`Unknown model "${arg}".`);
+		return match;
 	}
 
-	async selectThinkingLevel(): Promise<void> {
-		const client = await this.start();
-		const [levels, state] = await Promise.all([client.getAvailableThinkingLevels(), client.getState()]);
-		const pick = await this.pick(thinkingLevelItems(levels, state.thinkingLevel), "Select a thinking level");
-		if (!pick) return;
-		await client.setThinkingLevel(pick.value);
-		await this.refreshState(client);
+	/** Relative workspace paths for @ mentions, cached briefly while the user types. */
+	private async workspaceFiles(): Promise<string[]> {
+		if (this.files && Date.now() - this.files.at < 10_000) return this.files.paths;
+		const uris = await vscode.workspace.findFiles("**/*", "**/{node_modules,.git,dist,out}/**", 20_000);
+		const paths = uris.map((uri) => vscode.workspace.asRelativePath(uri, false)).sort();
+		this.files = { at: Date.now(), paths };
+		return paths;
 	}
 
 	/** Session changes while a run streams would race with its events. */
@@ -207,10 +264,6 @@ class PiController implements vscode.Disposable {
 		return client;
 	}
 
-	private pick<T>(items: PickItem<T>[], placeHolder: string): Thenable<PickItem<T> | undefined> {
-		return vscode.window.showQuickPick(items, { placeHolder, matchOnDescription: true, matchOnDetail: true });
-	}
-
 	/** Show the active session's history and settings after it changed underneath the transcript. */
 	private async reload(client: RpcClient): Promise<void> {
 		this.chat.load(await client.getMessages());
@@ -218,15 +271,25 @@ class PiController implements vscode.Disposable {
 	}
 
 	private async refreshState(client: RpcClient): Promise<void> {
-		const state = await client.getState();
-		this.model = state.model ? { provider: state.model.provider, id: state.model.id } : undefined;
-		this.thinkingLevel = state.thinkingLevel;
-		this.chat.setDescription(state.sessionName);
-		this.updateModelItem();
+		const [state, thinkingLevels] = await Promise.all([client.getState(), client.getAvailableThinkingLevels()]);
+		this.setMeta({
+			started: true,
+			sessionName: state.sessionName,
+			model: state.model ? { provider: state.model.provider, id: state.model.id } : undefined,
+			thinkingLevel: state.thinkingLevel,
+			thinkingLevels,
+		});
 	}
 
-	private updateModelItem(): void {
-		this.modelItem.text = `$(sparkle) ${this.model?.id ?? "no model"}${this.thinkingLevel && this.thinkingLevel !== "off" ? ` · ${this.thinkingLevel}` : ""}`;
+	private setMeta(meta: PanelMeta): void {
+		this.meta = meta;
+		this.chat.setMeta(meta);
+		if (!meta.started) {
+			this.modelItem.hide();
+			return;
+		}
+		const thinking = meta.thinkingLevel && meta.thinkingLevel !== "off" ? ` · ${meta.thinkingLevel}` : "";
+		this.modelItem.text = `$(sparkle) ${meta.model?.id ?? "no model"}${thinking}`;
 		this.modelItem.show();
 	}
 
@@ -235,7 +298,7 @@ class PiController implements vscode.Disposable {
 		await this.focusChat();
 	}
 
-	private async focusChat(): Promise<void> {
+	async focusChat(): Promise<void> {
 		await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
 	}
 
@@ -248,11 +311,15 @@ class PiController implements vscode.Disposable {
 		try {
 			await action();
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			this.output.appendLine(`error: ${message}`);
-			this.chat.dispatch({ type: "ui_error", message });
-			void vscode.window.showErrorMessage(`Pi: ${message.split("\n")[0]}`);
+			this.report(error);
 		}
+	}
+
+	private report(error: unknown): void {
+		const message = error instanceof Error ? error.message : String(error);
+		this.output.appendLine(`error: ${message}`);
+		this.chat.dispatch({ type: "ui_error", message });
+		void vscode.window.showErrorMessage(`Pi: ${message.split("\n")[0]}`);
 	}
 
 	/** The process is stopped by deactivate(), which VS Code awaits. */
@@ -298,11 +365,8 @@ class PiController implements vscode.Disposable {
 				// Dialogs of the finished run (for example a review cut off by Abort) are already resolved by pi.
 				this.ui.cancelAll();
 			}
-			if (event.type === "session_info_changed") this.chat.setDescription(event.name);
-			if (event.type === "thinking_level_changed") {
-				this.thinkingLevel = event.level;
-				this.updateModelItem();
-			}
+			if (event.type === "session_info_changed") this.setMeta({ ...this.meta, sessionName: event.name });
+			if (event.type === "thinking_level_changed") this.setMeta({ ...this.meta, thinkingLevel: event.level });
 		});
 
 		this.setStatus("starting");
@@ -351,11 +415,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand("pi.acceptChange", () => pi.ui.resolveReview(ACCEPT)),
 		vscode.commands.registerCommand("pi.rejectChange", () => pi.ui.resolveReview(REJECT)),
 		vscode.commands.registerCommand("pi.newSession", () => pi.run(() => pi.newSession())),
-		vscode.commands.registerCommand("pi.switchSession", () => pi.run(() => pi.switchSession())),
-		vscode.commands.registerCommand("pi.forkSession", () => pi.run(() => pi.forkSession())),
-		vscode.commands.registerCommand("pi.renameSession", () => pi.run(() => pi.renameSession())),
-		vscode.commands.registerCommand("pi.selectModel", () => pi.run(() => pi.selectModel())),
-		vscode.commands.registerCommand("pi.selectThinkingLevel", () => pi.run(() => pi.selectThinkingLevel())),
+		vscode.commands.registerCommand("pi.switchSession", () => pi.run(() => pi.openMenu("sessions"))),
+		vscode.commands.registerCommand("pi.forkSession", () => pi.run(() => pi.openMenu("forks"))),
+		vscode.commands.registerCommand("pi.renameSession", () => pi.run(() => pi.openMenu("rename"))),
+		vscode.commands.registerCommand("pi.selectModel", () => pi.run(() => pi.openMenu("models"))),
+		vscode.commands.registerCommand("pi.selectThinkingLevel", () => pi.run(() => pi.openMenu("thinking"))),
 	);
 }
 

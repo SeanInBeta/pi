@@ -1,12 +1,24 @@
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import { type AgentMessage, type ChatAction, createChatState, diffChat, reduceChat } from "./chat-state.ts";
-import type { Attachment, HostMessage, WebviewMessage } from "./chat-types.ts";
+import type {
+	Attachment,
+	HostMessage,
+	MenuItem,
+	MenuQuery,
+	PanelCommand,
+	PanelMenu,
+	PanelMeta,
+	WebviewMessage,
+} from "./chat-types.ts";
 
 export interface ChatViewHandlers {
 	/** Send the typed text together with the composer draft. */
 	submit(text: string): Promise<void>;
 	abort(): Promise<void>;
+	/** Items for an in-panel menu. Failures are reported by the handler and yield an empty menu. */
+	query(query: MenuQuery, text: string): Promise<MenuItem[]>;
+	command(command: PanelCommand, arg: string | undefined): Promise<void>;
 }
 
 /**
@@ -20,7 +32,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private readonly handlers: ChatViewHandlers;
 	private state = createChatState();
 	private view: vscode.WebviewView | undefined;
-	private description: string | undefined;
+	private meta: PanelMeta = { started: false, thinkingLevels: [] };
 
 	constructor(extensionUri: vscode.Uri, handlers: ChatViewHandlers) {
 		this.extensionUri = extensionUri;
@@ -34,15 +46,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		view.webview.onDidReceiveMessage((message: WebviewMessage) => {
 			if (message.type === "ready") {
 				this.post({ type: "reset", state: this.state });
+				this.post({ type: "meta", meta: this.meta });
 			} else if (message.type === "send") {
 				void this.handlers.submit(message.text);
 			} else if (message.type === "abort") {
 				void this.handlers.abort();
 			} else if (message.type === "removeAttachment") {
 				this.dispatch({ type: "draft_remove", ids: [message.id] });
+			} else if (message.type === "query") {
+				void this.handlers
+					.query(message.query, message.text ?? "")
+					.then((items) => this.post({ type: "queryResult", id: message.id, items }));
+			} else if (message.type === "command") {
+				void this.handlers.command(message.command, message.arg);
 			}
 		});
-		view.description = this.description;
 		view.onDidDispose(() => {
 			if (this.view === view) this.view = undefined;
 		});
@@ -65,10 +83,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.post({ type: "setInput", text });
 	}
 
-	/** Text next to the view title, used for the session name. */
-	setDescription(description: string | undefined): void {
-		this.description = description;
-		if (this.view) this.view.description = description;
+	setMeta(meta: PanelMeta): void {
+		this.meta = meta;
+		this.post({ type: "meta", meta });
+	}
+
+	openMenu(menu: PanelMenu): void {
+		this.post({ type: "openMenu", menu });
 	}
 
 	/** Attachments waiting in the composer. */
@@ -100,17 +121,45 @@ function renderHtml(webview: vscode.Webview, assets: vscode.Uri): string {
 	<link rel="stylesheet" href="${style}">
 </head>
 <body>
+	<header id="header">
+		<button type="button" id="session-title" class="title-button" title="Sessions" data-menu-trigger>
+			<span id="session-name">New session</span>${ICONS.chevron}
+		</button>
+		<input id="rename" class="rename" hidden placeholder="Session name">
+		<div class="header-actions">
+			<button type="button" id="new-session" class="icon-button" title="New session">${ICONS.plus}</button>
+			<button type="button" id="history" class="icon-button" title="Sessions" data-menu-trigger>${ICONS.history}</button>
+		</div>
+	</header>
+	<div id="header-menu" class="menu"></div>
 	<main id="transcript"></main>
 	<div id="status"></div>
-	<form id="composer">
-		<div id="draft" hidden></div>
-		<textarea id="input" rows="3" placeholder="Ask pi (Enter to send, Shift+Enter for a new line)"></textarea>
-		<div class="actions">
-			<button type="button" id="abort" class="secondary" hidden>Abort</button>
-			<button type="submit" id="send">Send</button>
-		</div>
-	</form>
+	<div class="composer-wrap">
+		<div id="composer-menu" class="menu"></div>
+		<form id="composer">
+			<div id="draft" hidden></div>
+			<textarea id="input" rows="2" placeholder="Ask pi anything. / for commands, @ for files"></textarea>
+			<div class="toolbar">
+				<button type="button" id="attach" class="icon-button" title="Add context" data-menu-trigger>${ICONS.plus}</button>
+				<button type="button" id="model" class="chip-button" title="Model and thinking level" data-menu-trigger>
+					<span id="model-label">Model</span>${ICONS.chevron}
+				</button>
+				<span class="spacer"></span>
+				<button type="submit" id="send" class="round-button" title="Send (Enter)" disabled>${ICONS.arrowUp}${ICONS.stop}</button>
+			</div>
+		</form>
+	</div>
 	<script nonce="${nonce}" src="${script}"></script>
 </body>
 </html>`;
 }
+
+/** Inline SVG icons (static markup, drawn with currentColor). */
+const ICONS = {
+	plus: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>',
+	history:
+		'<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>',
+	chevron: '<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>',
+	arrowUp: '<svg class="icon send-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4" /></svg>',
+	stop: '<svg class="icon stop-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1" /></svg>',
+};

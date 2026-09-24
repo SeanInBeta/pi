@@ -1,4 +1,5 @@
 import type { AssistantBlock, Attachment, ChatItem, HostMessage, ToolRun, WebviewMessage } from "../chat-types.ts";
+import { Controls, element } from "./controls.ts";
 import { renderMarkdown } from "./markdown.ts";
 
 declare function acquireVsCodeApi(): { postMessage(message: WebviewMessage): void };
@@ -12,27 +13,33 @@ const KIND_LABELS: Record<Attachment["kind"], string> = {
 
 const vscode = acquireVsCodeApi();
 const transcript = element<HTMLElement>("transcript");
-const statusLine = element<HTMLElement>("status");
-const composer = element<HTMLFormElement>("composer");
-const input = element<HTMLTextAreaElement>("input");
-const sendButton = element<HTMLButtonElement>("send");
-const abortButton = element<HTMLButtonElement>("abort");
-const draftList = element<HTMLElement>("draft");
-
-let draft: Attachment[] = [];
+const controls = new Controls((message) => vscode.postMessage(message));
 
 /** Rendered element per transcript item, in transcript order. */
 let rendered: HTMLElement[] = [];
 /** Items waiting for the next animation frame, so a burst of deltas renders once. */
 let pending = new Map<number, ChatItem>();
 let pendingLength = 0;
+/** Current transcript items, for the session title fallback. */
+const items: ChatItem[] = [];
 let frame = 0;
 
 window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
 	const message = event.data;
 	if (message.type === "setInput") {
-		input.value = message.text;
-		input.focus();
+		controls.setInput(message.text);
+		return;
+	}
+	if (message.type === "meta") {
+		controls.setMeta(message.meta);
+		return;
+	}
+	if (message.type === "queryResult") {
+		controls.queryResult(message.id, message.items);
+		return;
+	}
+	if (message.type === "openMenu") {
+		controls.openMenu(message.menu);
 		return;
 	}
 	if (message.type === "reset") {
@@ -45,36 +52,23 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
 			message.state.items.map((item, index) => ({ index, item })),
 			message.state.items.length,
 		);
-		setActivity(message.state.running, message.state.status, message.state.queued);
-		setDraft(message.state.draft);
+		controls.setActivity(message.state.running, message.state.status, message.state.queued);
+		controls.setDraft(message.state.draft);
 	} else {
 		queueItems(message.changed, message.length);
-		setActivity(message.running, message.status, message.queued);
-		setDraft(message.draft);
+		controls.setActivity(message.running, message.status, message.queued);
+		controls.setDraft(message.draft);
 	}
 });
-
-composer.addEventListener("submit", (event) => {
-	event.preventDefault();
-	const text = input.value.trim();
-	if (!text && draft.length === 0) return;
-	vscode.postMessage({ type: "send", text });
-	input.value = "";
-});
-
-input.addEventListener("keydown", (event) => {
-	if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-		event.preventDefault();
-		composer.requestSubmit();
-	}
-});
-
-abortButton.addEventListener("click", () => vscode.postMessage({ type: "abort" }));
 
 vscode.postMessage({ type: "ready" });
 
 function queueItems(changed: { index: number; item: ChatItem }[], length: number): void {
-	for (const { index, item } of changed) pending.set(index, item);
+	for (const { index, item } of changed) {
+		pending.set(index, item);
+		items[index] = item;
+	}
+	items.length = length;
 	pendingLength = length;
 	if (!frame) frame = requestAnimationFrame(flush);
 }
@@ -95,37 +89,9 @@ function flush(): void {
 	}
 	for (const extra of rendered.splice(pendingLength)) extra.remove();
 	pending.clear();
+	const firstUser = items.find((item) => item.kind === "user");
+	controls.setFallbackTitle(firstUser?.kind === "user" ? firstUser.text : undefined);
 	if (stickToBottom) transcript.scrollTop = transcript.scrollHeight;
-}
-
-function setActivity(running: boolean, status: string | undefined, queued: number): void {
-	const parts = running ? [status ?? "Working..."] : status ? [status] : [];
-	if (queued > 0) parts.push(`${queued} queued`);
-	statusLine.textContent = parts.join(" · ");
-	abortButton.hidden = !running;
-	sendButton.textContent = running ? "Steer" : "Send";
-}
-
-/** Composer chips for attachments that the next message will carry. */
-function setDraft(next: Attachment[]): void {
-	if (next === draft) return;
-	draft = next;
-	draftList.replaceChildren(
-		...draft.map((attachment) => {
-			const chip = create("span", "chip");
-			chip.title = attachment.note ? `${attachment.path} (${attachment.note})` : attachment.path;
-			const remove = create("button", "chip-remove", "\u00d7");
-			remove.title = "Remove";
-			remove.addEventListener("click", () => vscode.postMessage({ type: "removeAttachment", id: attachment.id }));
-			chip.append(
-				create("span", "chip-kind", KIND_LABELS[attachment.kind]),
-				create("span", "", attachment.label),
-				remove,
-			);
-			return chip;
-		}),
-	);
-	draftList.hidden = draft.length === 0;
 }
 
 function renderItem(item: ChatItem): HTMLElement {
@@ -219,10 +185,4 @@ function create(tag: string, className: string, text?: string): HTMLElement {
 	if (className) node.className = className;
 	if (text !== undefined) node.textContent = text;
 	return node;
-}
-
-function element<T extends HTMLElement>(id: string): T {
-	const node = document.getElementById(id);
-	if (!node) throw new Error(`Missing #${id}`);
-	return node as T;
 }

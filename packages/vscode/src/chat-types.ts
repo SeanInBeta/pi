@@ -63,11 +63,54 @@ export interface ChatState {
 	sent: SentPrompt[];
 }
 
+/** One entry of an in-panel menu: sessions, models, commands, files. */
+export interface MenuItem {
+	label: string;
+	description?: string;
+	detail?: string;
+	/** Opaque value sent back when the item is chosen. */
+	value: string;
+	current?: boolean;
+}
+
+export type MenuQuery = "sessions" | "models" | "forks" | "commands" | "files";
+
+/** Menus the host can open in the panel, for palette commands and the status bar. */
+export type PanelMenu = "sessions" | "models" | "thinking" | "forks" | "rename";
+
+/** Actions the panel asks the host to perform. `arg` is the chosen menu value or typed argument. */
+export type PanelCommand =
+	| "newSession"
+	| "switchSession"
+	| "fork"
+	| "clone"
+	| "rename"
+	| "setModel"
+	| "setThinking"
+	| "compact"
+	| "copyLast"
+	| "attachSelection"
+	| "attachFile"
+	| "attachProblems";
+
+/** Session and model state shown in the panel header and composer. */
+export interface PanelMeta {
+	started: boolean;
+	sessionName?: string;
+	model?: { provider: string; id: string };
+	thinkingLevel?: string;
+	/** Levels the current model supports. */
+	thinkingLevels: string[];
+}
+
 /** Host to webview. `update` carries only items whose identity changed since the last message. */
 export type HostMessage =
 	| { type: "reset"; state: ChatState }
 	/** Replace the composer text, for example with the message a fork started from. */
 	| { type: "setInput"; text: string }
+	| { type: "meta"; meta: PanelMeta }
+	| { type: "queryResult"; id: number; items: MenuItem[] }
+	| { type: "openMenu"; menu: PanelMenu }
 	| {
 			type: "update";
 			length: number;
@@ -83,4 +126,6 @@ export type WebviewMessage =
 	| { type: "ready" }
 	| { type: "send"; text: string }
 	| { type: "abort" }
-	| { type: "removeAttachment"; id: string };
+	| { type: "removeAttachment"; id: string }
+	| { type: "query"; id: number; query: MenuQuery; text?: string }
+	| { type: "command"; command: PanelCommand; arg?: string };
