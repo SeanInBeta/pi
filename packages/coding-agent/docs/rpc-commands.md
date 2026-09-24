@@ -583,6 +583,37 @@ Response:
 }
 ```
 
+### list_sessions
+
+List saved sessions in the current session directory, the same list the interactive `/resume` selector shows for the current project. `created` and `modified` are ISO 8601 timestamps.
+
+```json
+{"type": "list_sessions"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "list_sessions",
+  "success": true,
+  "data": {
+    "sessions": [
+      {
+        "path": "/home/user/.pi/agent/sessions/--work-project--/2026-01-01T10-00-00-000Z_0192.jsonl",
+        "id": "0192...",
+        "cwd": "/work/project",
+        "name": "Refactor parser",
+        "created": "2026-01-01T10:00:00.000Z",
+        "modified": "2026-01-01T10:30:00.000Z",
+        "messageCount": 12,
+        "firstMessage": "Refactor the parser..."
+      }
+    ]
+  }
+}
+```
+
 ### switch_session
 
 Load a different session file. Can be canceled by a `session_before_switch` extension event handler.

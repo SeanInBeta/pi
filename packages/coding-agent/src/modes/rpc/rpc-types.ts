@@ -58,6 +58,7 @@ export type RpcCommand =
 	// Session
 	| { id?: string; type: "get_session_stats" }
 	| { id?: string; type: "export_html"; outputPath?: string }
+	| { id?: string; type: "list_sessions" }
 	| { id?: string; type: "switch_session"; sessionPath: string }
 	| { id?: string; type: "fork"; entryId: string }
 	| { id?: string; type: "clone" }
@@ -76,6 +77,22 @@ export type RpcCommand =
 // ============================================================================
 // RPC Slash Command (for get_commands response)
 // ============================================================================
+
+/** A saved session in the current session directory, as returned by `list_sessions`. */
+export interface RpcSessionSummary {
+	path: string;
+	id: string;
+	/** Working directory where the session was started. Empty string for old sessions. */
+	cwd: string;
+	name?: string;
+	/** Path to the parent session if this session was forked. */
+	parentSessionPath?: string;
+	/** ISO 8601 timestamps. */
+	created: string;
+	modified: string;
+	messageCount: number;
+	firstMessage: string;
+}
 
 /** A command available for invocation via prompt */
 export interface RpcSlashCommand {
@@ -193,6 +210,13 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "fork"; success: true; data: { text: string; cancelled: boolean } }
 	| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
+	| {
+			id?: string;
+			type: "response";
+			command: "list_sessions";
+			success: true;
+			data: { sessions: RpcSessionSummary[] };
+	  }
 	| {
 			id?: string;
 			type: "response";

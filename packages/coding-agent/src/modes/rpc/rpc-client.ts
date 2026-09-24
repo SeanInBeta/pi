@@ -13,7 +13,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type { RpcCommand, RpcResponse, RpcSessionState, RpcSessionSummary, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -369,6 +369,14 @@ export class RpcClient {
 	async exportHtml(outputPath?: string): Promise<{ path: string }> {
 		const response = await this.send({ type: "export_html", outputPath });
 		return this.getData(response);
+	}
+
+	/**
+	 * List saved sessions in the current session directory.
+	 */
+	async listSessions(): Promise<RpcSessionSummary[]> {
+		const response = await this.send({ type: "list_sessions" });
+		return this.getData<{ sessions: RpcSessionSummary[] }>(response).sessions;
 	}
 
 	/**
