@@ -13,6 +13,7 @@
  * Development builds (`npm run build`) are unaffected and keep running pi from source.
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -254,6 +255,28 @@ function sizeOf(path) {
 	return readdirSync(path).reduce((total, entry) => total + sizeOf(join(path, entry)), 0);
 }
 
+/**
+ * Release checks: the extension carries pi's version, and pi's model catalogs are current. Stale catalogs
+ * (from before a catalog format change) load as empty, so the bundled pi would offer no built-in models.
+ */
+function checkRelease() {
+	const extensionVersion = JSON.parse(readFileSync(join(extensionDir, "package.json"), "utf8")).version;
+	const piVersion = JSON.parse(readFileSync(join(codingAgentDir, "package.json"), "utf8")).version;
+	if (extensionVersion !== piVersion) {
+		throw new Error(`Extension version ${extensionVersion} differs from the bundled pi ${piVersion}; keep them in sync.`);
+	}
+	try {
+		execFileSync(process.execPath, [join(repoRoot, "packages", "ai", "scripts", "check-model-data.ts")], {
+			cwd: join(repoRoot, "packages", "ai"),
+			stdio: "pipe",
+		});
+	} catch (error) {
+		const output = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim();
+		throw new Error(`pi's model data is missing or stale; run \`npm run hydrate:model-data\` first.\n${output}`);
+	}
+}
+
+checkRelease();
 rmSync(distDir, { recursive: true, force: true });
 mkdirSync(distDir, { recursive: true });
 await buildExtension();

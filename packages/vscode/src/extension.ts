@@ -1,20 +1,26 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import * as vscode from "vscode";
+import type { RpcAuthEvent } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import type {
 	ApprovalMode,
 	Attachment,
+	LoginRequest,
 	MenuItem,
 	MenuQuery,
 	PanelCommand,
 	PanelMenu,
 	PanelMeta,
+	SetupState,
 } from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
 import { ExtensionUIBridge, type UITarget } from "./extension-ui.ts";
 import { ACCEPT, REJECT } from "./file-change.ts";
 import { bundledRuntime, devRuntime, type PiRuntime } from "./pi-launch.ts";
-import { PiSession, type PiSessionHost } from "./pi-session.ts";
-import { fileItems } from "./quick-picks.ts";
+import { hasModel, PiSession, type PiSessionHost } from "./pi-session.ts";
+import { fileItems, providerItems } from "./quick-picks.ts";
 
 /** Session files of the open tabs and the active one, restored when the window reloads. */
 const TABS_KEY = "pi.chatTabs";
@@ -29,6 +35,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	readonly chat: ChatViewProvider;
 	readonly ui: ExtensionUIBridge;
 	private readonly extensionPath: string;
+	private readonly extensionId: string;
 	/** Installed from a VSIX: run the bundled pi; in the Extension Development Host: pi from source. */
 	private readonly bundled: boolean;
 	private readonly output = vscode.window.createOutputChannel("Pi");
@@ -40,9 +47,14 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	private active: PiSession;
 	private lastMeta = "";
 	private files: { at: number; paths: string[] } | undefined;
+	/** The running sign-in, shown in the panel instead of the chat. */
+	private login: Extract<SetupState, { kind: "login" }> | undefined;
+	/** The sign-in's pending code prompt, answered from the card. */
+	private loginPrompt: { id: string; session: PiSession } | undefined;
 
-	constructor(extensionUri: vscode.Uri, workspaceState: vscode.Memento, bundled: boolean) {
+	constructor(extensionUri: vscode.Uri, extensionId: string, workspaceState: vscode.Memento, bundled: boolean) {
 		this.extensionPath = extensionUri.fsPath;
+		this.extensionId = extensionId;
 		this.bundled = bundled;
 		this.workspaceState = workspaceState;
 		this.chat = new ChatViewProvider(extensionUri, {
@@ -58,8 +70,9 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				}
 			},
 			command: (command, arg) => this.run(() => this.command(command, arg)),
-			// The shown tab starts with the panel, so a restored session loads its history right away.
-			ready: () => this.run(() => this.active.start()),
+			// The shown tab starts with the panel, so a restored session loads its history and a missing
+			// folder, Node.js or model shows up before the first message.
+			ready: () => void this.startActive(),
 			review: (id, choice) => this.ui.resolveReview(choice, id),
 		});
 		this.ui = new ExtensionUIBridge({
@@ -78,7 +91,13 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		this.disposables.push(
 			vscode.workspace.onDidChangeConfiguration((event) => {
 				if (event.affectsConfiguration("pi.approvalMode")) this.publishMeta();
+				// A changed runtime setting may fix a failed start.
+				const runtimeSetting = ["pi.nodePath", "pi.cliPath", "pi.args"].some((key) =>
+					event.affectsConfiguration(key),
+				);
+				if (runtimeSetting && this.active.startError) void this.retryStart();
 			}),
+			vscode.workspace.onDidChangeWorkspaceFolders(() => void this.startActive()),
 		);
 		this.publishMeta();
 	}
@@ -87,16 +106,17 @@ class PiController implements vscode.Disposable, PiSessionHost {
 
 	runtime(): PiRuntime {
 		const config = vscode.workspace.getConfiguration("pi");
+		const nodePath = config.get<string>("nodePath") || undefined;
 		const runtime = this.bundled
 			? bundledRuntime(
 					this.extensionPath,
 					{ execPath: process.execPath, nodeVersion: process.versions.node },
-					config.get<string>("nodePath") || undefined,
+					nodePath,
 				)
-			: devRuntime(this.extensionPath);
+			: { ...devRuntime(this.extensionPath), command: nodePath ?? "node" };
 		// pi.cliPath points at another pi entry point, run with node.
 		const cliPath = config.get<string>("cliPath");
-		return cliPath ? { ...runtime, command: "node", cliPath, env: {} } : runtime;
+		return cliPath ? { ...runtime, command: nodePath ?? "node", cliPath, env: {} } : runtime;
 	}
 
 	log(session: PiSession, line: string): void {
@@ -115,6 +135,18 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	}
 
 	uiRequest(session: PiSession, request: Parameters<ExtensionUIBridge["handle"]>[0]): void {
+		const metadata = "metadata" in request ? request.metadata : undefined;
+		if (
+			this.login &&
+			request.method === "input" &&
+			metadata?.kind === "pi.auth" &&
+			metadata.promptType === "manual_code"
+		) {
+			this.loginPrompt = { id: request.id, session };
+			this.login = { ...this.login, prompt: { message: request.title, placeholder: request.placeholder } };
+			this.publishMeta();
+			return;
+		}
 		this.ui.handle(request, this.uiTarget(session));
 	}
 
@@ -124,6 +156,30 @@ class PiController implements vscode.Disposable, PiSessionHost {
 
 	setInput(session: PiSession, text: string): void {
 		if (session === this.active) this.chat.setInput(text);
+	}
+
+	authEvent(_session: PiSession, event: RpcAuthEvent["event"]): void {
+		const login = this.login;
+		if (!login) return;
+		if (event.type === "auth_url") {
+			this.login = {
+				...login,
+				url: event.url,
+				message: event.instructions ?? "Finish signing in in your browser.",
+			};
+			void vscode.env.openExternal(vscode.Uri.parse(event.url));
+		} else if (event.type === "device_code") {
+			this.login = {
+				...login,
+				url: event.verificationUri,
+				code: event.userCode,
+				message: "Enter this code on the sign-in page.",
+			};
+			void vscode.env.openExternal(vscode.Uri.parse(event.verificationUri));
+		} else {
+			this.login = { ...login, message: event.message };
+		}
+		this.publishMeta();
 	}
 
 	// Tabs
@@ -205,6 +261,21 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		await session.start();
 	}
 
+	/**
+	 * Start the shown tab when the panel opens or folders change. Failures are shown in the panel
+	 * (see {@link setupState}), so they are only logged here.
+	 */
+	private async startActive(): Promise<void> {
+		this.publishMeta();
+		if (!workspaceFolder()) return;
+		try {
+			await this.active.start();
+		} catch (error) {
+			this.output.appendLine(`start failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		this.publishMeta();
+	}
+
 	/** Start the active tab if needed; used by the panel and palette commands. */
 	start(): Promise<unknown> {
 		return this.active.start();
@@ -222,6 +293,10 @@ class PiController implements vscode.Disposable, PiSessionHost {
 
 	async query(query: MenuQuery, text: string): Promise<MenuItem[]> {
 		if (query === "files") return fileItems(await this.workspaceFiles(), text);
+		if (query === "providers") {
+			const method = text === "oauth" || text === "api_key" ? text : undefined;
+			return providerItems(await this.active.authProviders(), method);
+		}
 		return this.active.query(query);
 	}
 
@@ -245,9 +320,115 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				return this.addFile();
 			case "attachProblems":
 				return this.addDiagnostics();
+			case "openFolder":
+				await vscode.commands.executeCommand("vscode.openFolder");
+				return;
+			case "retryStart":
+				return this.retryStart();
+			case "login":
+				return this.signIn(JSON.parse(arg ?? "{}") as LoginRequest);
+			case "cancelLogin":
+				return this.active.abortLogin();
+			case "loginCode":
+				return this.answerLoginPrompt(arg ?? "");
+			case "openLoginUrl":
+				if (this.login?.url) await vscode.env.openExternal(vscode.Uri.parse(this.login.url));
+				return;
+			case "logout":
+				return this.signOut(arg);
+			case "openSettings":
+				await vscode.commands.executeCommand("workbench.action.openSettings", `@ext:${this.extensionId}`);
+				return;
+			case "openPiSettings":
+				return this.openPiSettings();
+			case "showLog":
+				return this.showLog();
 			default:
 				return this.withActive((session) => session.serial(() => session.command(command, arg)));
 		}
+	}
+
+	/** Try again after fixing a start failure, for example after installing Node.js. */
+	private async retryStart(): Promise<void> {
+		this.active.startError = undefined;
+		await this.startActive();
+	}
+
+	/** Sign in to a provider in the shown tab's pi. The panel shows progress until it finishes. */
+	private async signIn(request: LoginRequest): Promise<void> {
+		if (this.login) throw new Error("A sign-in is already running.");
+		const session = this.active;
+		this.login = {
+			kind: "login",
+			name: request.name,
+			method: request.method,
+			message:
+				request.method === "api_key"
+					? `Enter your ${request.name} API key in the box at the top of the window.`
+					: `Starting the ${request.name} sign-in...`,
+		};
+		this.publishMeta();
+		try {
+			const result = await session.login(request.provider, request.method);
+			const model = hasModel(session.info) ? session.info.model : undefined;
+			if (result.warning) void vscode.window.showWarningMessage(`Pi: ${result.warning}`);
+			else
+				void vscode.window.showInformationMessage(
+					`Pi: signed in to ${request.name}${model ? `. Using ${model.id}.` : "."}`,
+				);
+			await this.reloadOtherTabs(session);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Closing the prompt or pressing Cancel is not an error.
+			if (!/Login cancelled|aborted/i.test(message)) throw error;
+		} finally {
+			this.login = undefined;
+			this.loginPrompt = undefined;
+			this.publishMeta();
+		}
+	}
+
+	private answerLoginPrompt(value: string): void {
+		const prompt = this.loginPrompt;
+		if (!prompt || !value.trim() || !this.login) return;
+		this.loginPrompt = undefined;
+		this.login = { ...this.login, prompt: undefined, message: "Checking the code..." };
+		this.publishMeta();
+		prompt.session.respondToUI({ type: "extension_ui_response", id: prompt.id, value: value.trim() });
+	}
+
+	private async signOut(provider: string | undefined): Promise<void> {
+		if (!provider) return;
+		const choice = await vscode.window.showWarningMessage(
+			`Sign out of ${provider}?`,
+			{
+				modal: true,
+				detail: "Stored credentials for this provider are removed. Environment variables are not affected.",
+			},
+			"Sign Out",
+		);
+		if (choice !== "Sign Out") return;
+		await this.active.logout(provider);
+		await this.reloadOtherTabs(this.active);
+	}
+
+	/** Other tabs' pi processes loaded credentials at start; idle ones restart when next shown. */
+	private async reloadOtherTabs(current: PiSession): Promise<void> {
+		await Promise.all(
+			this.sessions
+				.filter((session) => session !== current && session.status === "idle")
+				.map((session) => session.stop()),
+		);
+	}
+
+	/** pi's global settings file (shared with pi in the terminal), created when missing. */
+	private async openPiSettings(): Promise<void> {
+		const file = join(piAgentDir(), "settings.json");
+		if (!existsSync(file)) {
+			mkdirSync(dirname(file), { recursive: true });
+			writeFileSync(file, "{}\n");
+		}
+		await vscode.window.showTextDocument(vscode.Uri.file(file));
 	}
 
 	async prompt(): Promise<void> {
@@ -374,11 +555,23 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		return paths;
 	}
 
+	/** What blocks chatting, most basic first: a folder, a runnable pi, a sign-in in progress, a model. */
+	private setupState(): SetupState | undefined {
+		if (!workspaceFolder()) return { kind: "noFolder" };
+		if (this.login) return this.login;
+		const error = this.active.startError;
+		if (error) return { kind: "startFailed", ...error };
+		if (this.active.info.started && !hasModel(this.active.info)) return { kind: "noModel" };
+		return undefined;
+	}
+
 	/** Header tabs plus the active tab's settings; posted only when something visible changed. */
 	private publishMeta(): void {
 		const info = this.active.info;
 		const meta: PanelMeta = {
 			...info,
+			model: hasModel(info) ? info.model : undefined,
+			setup: this.setupState(),
 			approvalMode: this.approvalMode(),
 			tabs: this.sessions.map((session) => ({
 				id: session.id,
@@ -399,7 +592,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		this.statusItem.tooltip = "Show pi log";
 		if (info.started) {
 			const thinking = info.thinkingLevel && info.thinkingLevel !== "off" ? ` · ${info.thinkingLevel}` : "";
-			this.modelItem.text = `$(sparkle) ${info.model?.id ?? "no model"}${thinking}`;
+			this.modelItem.text = `$(sparkle) ${meta.model?.id ?? "no model"}${thinking}`;
 			this.modelItem.show();
 		} else {
 			this.modelItem.hide();
@@ -421,11 +614,23 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	}
 }
 
+function workspaceFolder(): string | undefined {
+	return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+/** pi's agent directory: PI_CODING_AGENT_DIR, which the pi child process inherits, or ~/.pi/agent. */
+function piAgentDir(): string {
+	const dir = process.env.PI_CODING_AGENT_DIR;
+	if (!dir) return join(homedir(), ".pi", "agent");
+	return dir === "~" || dir.startsWith("~/") ? join(homedir(), dir.slice(1)) : dir;
+}
+
 let controller: PiController | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
 	const pi = new PiController(
 		context.extensionUri,
+		context.extension.id,
 		context.workspaceState,
 		context.extensionMode === vscode.ExtensionMode.Production,
 	);
@@ -450,6 +655,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand("pi.renameSession", () => pi.run(() => pi.openMenu("rename"))),
 		vscode.commands.registerCommand("pi.selectModel", () => pi.run(() => pi.openMenu("models"))),
 		vscode.commands.registerCommand("pi.selectThinkingLevel", () => pi.run(() => pi.openMenu("thinking"))),
+		vscode.commands.registerCommand("pi.openSettings", () => pi.run(() => pi.openMenu("settings"))),
+		vscode.commands.registerCommand("pi.signIn", () => pi.run(() => pi.openMenu("providers"))),
 	);
 }
 

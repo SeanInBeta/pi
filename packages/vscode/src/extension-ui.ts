@@ -173,8 +173,11 @@ export class ExtensionUIBridge implements vscode.Disposable {
 				return choice === undefined ? { cancelled: true } : { confirmed: choice === "Yes" };
 			}
 			case "input": {
+				// Login prompts for API keys and tokens are masked.
+				const metadata = request.metadata;
+				const secret = metadata?.kind === "pi.auth" && metadata.promptType === "secret";
 				const value = await vscode.window.showInputBox(
-					{ title: request.title, placeHolder: request.placeholder, ignoreFocusOut: true },
+					{ title: request.title, placeHolder: request.placeholder, ignoreFocusOut: true, password: secret },
 					token,
 				);
 				return value === undefined ? { cancelled: true } : { value };

@@ -13,7 +13,22 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 - `/` lists commands with fuzzy matching (`/awe` finds `/skill:awesome-review`). At the start of the input it lists the built-ins below and pi's extension, prompt template and skill commands; after a space in the middle of the text (`what is /`) it lists pi's commands and inserts the chosen one. `@` lists workspace files (fuzzy match, same matcher as pi's terminal UI) and inserts `@path`, like the terminal UI.
 - Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
-- pi starts on the first message. Each start begins a new session, so the transcript is cleared.
+- pi starts when the panel opens, so setup problems show before the first message (see [First run](#first-run)).
+- The gear button opens Settings: model providers (sign in, enter or replace an API key, sign out), model choice, the extension's VS Code settings, pi's `settings.json`, and the log. `Pi: Settings` and `Pi: Sign In to a Model Provider` open the same menus from the palette.
+
+## First run
+
+Until chatting is possible, the panel shows a setup card instead of the chat, and the composer is disabled. The checks run in this order when the panel opens:
+
+1. **No folder open**: "Open a folder to start" with an Open Folder button. pi works in the first workspace folder and keeps sessions per folder.
+2. **pi cannot start**: before starting pi, the extension checks its Node.js. The installed extension uses VS Code's own Node when it is 22.19 or later, as pi requires; otherwise it asks `node` on `PATH` (or `pi.nodePath`) for its version. A missing or older Node.js shows "Node.js 22.19 or newer is required" with the exact problem, a download link, Open Settings and Retry. Any other start failure shows the error with Show Log and Retry. Changing `pi.nodePath`, `pi.cliPath` or `pi.args` retries automatically.
+3. **No model configured**: pi reports no usable model when no provider has credentials. The card "Connect a model provider" offers:
+   - **Sign in with an account** (OAuth, for example Anthropic, GitHub Copilot, OpenAI Codex): pick the provider; the sign-in page opens in the browser (VS Code asks before opening it). The card shows progress, a device code when the provider uses one, and a field to paste the redirect URL or code when the browser runs on another machine. Cancel stops the sign-in.
+   - **Use an API key**: pick the provider and enter the key in VS Code's masked input box.
+
+   After signing in, pi selects the provider's default model and saves it as the default, and the chat appears. Credentials go to pi's `auth.json` (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), shared with pi in the terminal, so an existing pi login is reused and no card appears. Environment variables such as `ANTHROPIC_API_KEY` also count as configured.
+
+Sign-in uses the `get_auth_providers`, `login`, `abort_login` and `logout` RPC commands, which this branch adds to pi.
 
 ## Reviewing file changes
 
@@ -123,11 +138,13 @@ Code layout:
 | `Pi: Abort` | Abort the current run |
 | `Pi: Stop` | Stop the pi process |
 | `Pi: Show Log` | Show the `Pi` output channel (also opened by clicking the status bar item) |
+| `Pi: Settings` | Open the settings menu in the panel |
+| `Pi: Sign In to a Model Provider` | Open the provider list in the panel |
 
 ## Settings
 
 - `pi.cliPath`: another pi CLI entry point, run with `node`. Empty uses the pi bundled in the VSIX, or in development `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source through `tsx`, so pi does not need to be built.
-- `pi.nodePath`: Node.js executable for the bundled pi. Empty uses VS Code's own Node when it is 22.19 or later, otherwise `node` from `PATH`.
+- `pi.nodePath`: Node.js executable that runs pi (22.19 or later), in the VSIX and in development. Empty uses VS Code's own Node when it is new enough (VSIX only), otherwise `node` from `PATH`.
 - `pi.args`: extra pi CLI arguments, for example `["--provider", "anthropic", "--model", "claude-sonnet-5"]`.
 - `pi.approvalMode`: `ask` (default) reviews every edit and write in a diff editor first; `auto` applies them directly. Also switchable in the composer.
 
@@ -167,6 +184,11 @@ code --install-extension packages/vscode/pi-vscode-plugin-<version>.vsix
 
 `npm run package` runs `scripts/build-package.mjs`, then `vsce package`. The VSIX is self-contained: it needs neither this repository nor a global pi.
 
+The build refuses to package when:
+
+- the extension's version differs from the bundled pi's (`packages/coding-agent/package.json`); the extension carries pi's version, currently 0.87.1;
+- pi's model data is missing or stale (`npm run check:model-data`). Stale catalogs load as empty, so the bundled pi would offer no built-in models. Run `npm run hydrate:model-data` first; it needs network access to models.dev.
+
 | Path in the VSIX | Content |
 |---|---|
 | `dist/extension.cjs`, `dist/webview/` | Extension and chat panel, bundled and minified |
@@ -176,7 +198,6 @@ code --install-extension packages/vscode/pi-vscode-plugin-<version>.vsix
 
 The installed extension (VS Code's production mode) runs `dist/pi` with `PI_PACKAGE_DIR` pointing at it. It uses VS Code's own Node (the editor binary with `ELECTRON_RUN_AS_NODE=1`) when that is 22.19 or later, as pi requires; older VS Code builds fall back to `node` from `PATH`, or `pi.nodePath`. The Extension Development Host keeps running pi from source as described under [Development](#development).
 
-pi reads its settings, auth and sessions from `~/.pi/agent` as usual, so an existing pi login is reused.
 
 ## Known limitations
 

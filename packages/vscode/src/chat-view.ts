@@ -126,10 +126,12 @@ function renderHtml(webview: vscode.Webview, assets: vscode.Uri): string {
 		<div class="header-actions">
 			<button type="button" id="new-tab" class="icon-button" title="New chat tab">${ICONS.plus}</button>
 			<button type="button" id="history" class="icon-button" title="Sessions" data-menu-trigger>${ICONS.history}</button>
+			<button type="button" id="settings" class="icon-button" title="Settings" data-menu-trigger>${ICONS.gear}</button>
 		</div>
 	</header>
 	<div id="tab-scroll" class="tab-scroll" hidden title="Scroll tabs"><div id="tab-scroll-thumb" class="tab-scroll-thumb"></div></div>
 	<div id="header-menu" class="menu"></div>
+	<section id="setup" class="setup" hidden></section>
 	<main id="transcript"></main>
 	<div id="status"></div>
 	<div class="composer-wrap">
@@ -172,6 +174,7 @@ const ICONS = {
 	plus: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>',
 	history:
 		'<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>',
+	gear: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" /></svg>',
 	chevron: '<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>',
 	chevronRight:
 		'<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 4.5 10 8l-3.5 3.5" /></svg>',

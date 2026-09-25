@@ -84,10 +84,11 @@ export interface MenuItem {
 	current?: boolean;
 }
 
-export type MenuQuery = "sessions" | "models" | "forks" | "commands" | "files";
+/** `providers` lists model providers; its text filters by login method (`oauth`, `api_key`, or empty for all). */
+export type MenuQuery = "sessions" | "models" | "forks" | "commands" | "files" | "providers";
 
 /** Menus the host can open in the panel, for palette commands and the status bar. */
-export type PanelMenu = "sessions" | "models" | "thinking" | "forks" | "rename";
+export type PanelMenu = "sessions" | "models" | "thinking" | "forks" | "rename" | "settings" | "providers";
 
 /** Actions the panel asks the host to perform. `arg` is the chosen menu value or typed argument. */
 export type PanelCommand =
@@ -107,7 +108,60 @@ export type PanelCommand =
 	| "copyLast"
 	| "attachSelection"
 	| "attachFile"
-	| "attachProblems";
+	| "attachProblems"
+	| "openFolder"
+	| "retryStart"
+	/** `arg`: {@link LoginRequest} as JSON. */
+	| "login"
+	| "cancelLogin"
+	/** Answer the sign-in card's code prompt; `arg`: the pasted code or redirect URL. */
+	| "loginCode"
+	| "openLoginUrl"
+	/** `arg`: provider id. */
+	| "logout"
+	| "openSettings"
+	| "openPiSettings"
+	| "showLog";
+
+/** A provider in the providers menu; the menu item's value is this object as JSON. */
+export interface ProviderChoice {
+	id: string;
+	name: string;
+	/** Label of the account sign-in, when the provider supports it. */
+	oauth?: string;
+	apiKey: boolean;
+	configured: boolean;
+}
+
+export interface LoginRequest {
+	provider: string;
+	name: string;
+	method: "oauth" | "api_key";
+}
+
+/**
+ * Shown in place of the chat until resolved: no folder is open, pi cannot start, no model is configured,
+ * or a sign-in is running.
+ */
+export type SetupState =
+	| { kind: "noFolder" }
+	| { kind: "startFailed"; message: string /** The failure is a missing or too old Node.js. */; node: boolean }
+	| { kind: "noModel" }
+	| {
+			kind: "login";
+			name: string;
+			method: "oauth" | "api_key";
+			message: string;
+			/** Sign-in page to open in the browser. */
+			url?: string;
+			/** Device code to enter on the sign-in page. */
+			code?: string;
+			/**
+			 * pi waits for a pasted code or redirect URL, alongside the browser callback. Asked in the card:
+			 * an input box would close when VS Code confirms opening the browser.
+			 */
+			prompt?: { message: string; placeholder?: string };
+	  };
 
 /** A chat tab in the panel header. Every tab runs its own pi process. */
 export interface SessionTab {
@@ -135,6 +189,7 @@ export interface PanelMeta {
 	thinkingLevel?: string;
 	/** Levels the current model supports. */
 	thinkingLevels: string[];
+	setup?: SetupState;
 }
 
 /** Host to webview. `update` carries only items whose identity changed since the last message. */

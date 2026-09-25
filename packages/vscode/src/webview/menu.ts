@@ -33,6 +33,8 @@ export class Menu {
 		host.hidden = true;
 		document.addEventListener("mousedown", (event) => {
 			const target = event.target as Node;
+			// A target that left the page was replaced by its own handler, e.g. an item that opened a follow-up menu.
+			if (!target.isConnected) return;
 			if (this.isOpen && !host.contains(target) && !(target as HTMLElement).closest?.("[data-menu-trigger]")) {
 				this.close();
 			}
@@ -126,7 +128,7 @@ export class Menu {
 			return;
 		}
 		for (const section of options.sections) {
-			const items = section.items.filter((item) => this.matches(item));
+			const items = this.rank(section.items.filter((item) => this.matches(item)));
 			if (items.length === 0) continue;
 			if (section.title) list.append(text("div", "menu-section", section.title));
 			for (const item of items) {
@@ -164,6 +166,19 @@ export class Menu {
 	private matches(item: MenuItem): boolean {
 		if (!this.filterText) return true;
 		return [item.label, item.description, item.detail].some((part) => part?.toLowerCase().includes(this.filterText));
+	}
+
+	/** While filtering, an exact label match comes first, then labels starting with the filter text. */
+	private rank(items: MenuItem[]): MenuItem[] {
+		if (!this.filterText) return items;
+		const score = (item: MenuItem) => {
+			const label = item.label.toLowerCase();
+			return label === this.filterText ? 0 : label.startsWith(this.filterText) ? 1 : 2;
+		};
+		return items
+			.map((item, index) => ({ item, index, score: score(item) }))
+			.sort((a, b) => a.score - b.score || a.index - b.index)
+			.map(({ item }) => item);
 	}
 
 	private countVisible(sections: MenuSection[]): number {

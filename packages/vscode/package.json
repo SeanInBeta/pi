@@ -122,6 +122,16 @@
 				"category": "Pi"
 			},
 			{
+				"command": "pi.openSettings",
+				"title": "Settings",
+				"category": "Pi"
+			},
+			{
+				"command": "pi.signIn",
+				"title": "Sign In to a Model Provider",
+				"category": "Pi"
+			},
+			{
 				"command": "pi.acceptChange",
 				"title": "Accept Proposed Change",
 				"category": "Pi",
@@ -209,7 +219,7 @@
 				"pi.nodePath": {
 					"type": "string",
 					"default": "",
-					"description": "Node.js executable for the bundled pi. Empty uses VS Code's own Node when it is new enough (22.19 or later), otherwise node from PATH."
+					"description": "Node.js executable that runs pi (22.19 or later). Empty uses VS Code's own Node when it is new enough, otherwise node from PATH."
 				}
 			}
 		}

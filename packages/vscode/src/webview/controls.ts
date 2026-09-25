@@ -1,11 +1,14 @@
 import { fuzzyFilter } from "../../../tui/src/fuzzy.ts";
 import type {
 	Attachment,
+	LoginRequest,
 	MenuItem,
 	MenuQuery,
 	PanelCommand,
 	PanelMenu,
 	PanelMeta,
+	ProviderChoice,
+	SetupState,
 	WebviewMessage,
 } from "../chat-types.ts";
 import { type TokenRules, tokenEndingAt } from "../text-tokens.ts";
@@ -60,6 +63,10 @@ export class Controls {
 	private readonly tabScroll = element<HTMLElement>("tab-scroll");
 	private readonly tabScrollThumb = element<HTMLElement>("tab-scroll-thumb");
 	private shownTabId: string | undefined;
+	private readonly setupCard = element<HTMLElement>("setup");
+	private readonly transcript = element<HTMLElement>("transcript");
+	/** The rendered setup state, so meta updates that do not change it keep the card as it is. */
+	private shownSetup = "";
 	private readonly effort = element<HTMLElement>("effort");
 	private readonly effortRange = element<HTMLInputElement>("effort-range");
 
@@ -118,6 +125,104 @@ export class Controls {
 				? "No model"
 				: "Loading model...";
 		if (!this.effort.hidden) this.renderEffort();
+		this.renderSetup(meta.setup);
+	}
+
+	/**
+	 * Setup steps replace the chat until they are done: open a folder, fix Node.js, connect a model provider,
+	 * or finish a sign-in. The composer is disabled meanwhile.
+	 */
+	private renderSetup(setup: SetupState | undefined): void {
+		const serialized = JSON.stringify(setup ?? null);
+		if (serialized === this.shownSetup) return;
+		this.shownSetup = serialized;
+		this.setupCard.hidden = !setup;
+		this.transcript.hidden = !!setup;
+		this.input.disabled = !!setup;
+		this.input.placeholder = setup ? "Finish the setup above to start chatting" : INPUT_PLACEHOLDER;
+		this.updateSendButton();
+		if (!setup) {
+			this.setupCard.replaceChildren();
+			return;
+		}
+		const button = (label: string, onClick: () => void, primary = false) => {
+			const node = create("button", primary ? "setup-button primary" : "setup-button", label) as HTMLButtonElement;
+			node.type = "button";
+			node.dataset.menuTrigger = "";
+			node.addEventListener("click", onClick);
+			return node;
+		};
+		const actions = create("div", "setup-actions");
+		const parts: HTMLElement[] = [];
+		if (setup.kind === "noFolder") {
+			parts.push(
+				create("h2", "", "Open a folder to start"),
+				create(
+					"p",
+					"",
+					"pi works inside a project folder: it reads and changes files there and keeps its sessions per folder.",
+				),
+			);
+			actions.append(button("Open Folder", () => this.command("openFolder"), true));
+		} else if (setup.kind === "startFailed") {
+			parts.push(
+				create("h2", "", setup.node ? "Node.js 22.19 or newer is required" : "pi could not start"),
+				create(
+					"p",
+					"setup-error",
+					setup.message.length > 800 ? `${setup.message.slice(0, 800)}...` : setup.message,
+				),
+			);
+			if (setup.node) {
+				const link = create("a", "", "Download Node.js") as HTMLAnchorElement;
+				link.href = "https://nodejs.org/";
+				parts.push(create("p", ""));
+				parts.at(-1)?.append(link);
+				actions.append(button("Open Settings", () => this.command("openSettings")));
+			} else {
+				actions.append(button("Show Log", () => this.command("showLog")));
+			}
+			actions.prepend(button("Retry", () => this.command("retryStart"), true));
+		} else if (setup.kind === "noModel") {
+			parts.push(
+				create("h2", "", "Connect a model provider"),
+				create(
+					"p",
+					"",
+					"pi needs a model before it can answer. Sign in with a subscription account, or enter an API key. Credentials are saved in pi's auth.json and shared with pi in the terminal.",
+				),
+			);
+			actions.append(
+				button("Sign in with an account", () => this.openProviders("oauth"), true),
+				button("Use an API key", () => this.openProviders("api_key"), true),
+				button("Settings", () => this.openSettings()),
+			);
+		} else {
+			// A paste prompt's text repeats the status message, so it replaces it.
+			parts.push(
+				create("h2", "", `Signing in to ${setup.name}`),
+				create("p", "", setup.prompt?.message ?? setup.message),
+			);
+			if (setup.code) {
+				const code = create("div", "setup-code", setup.code);
+				parts.push(code);
+				actions.append(button("Copy Code", () => this.post({ type: "copyText", text: setup.code ?? "" }), true));
+			}
+			if (setup.prompt) {
+				const field = create("input", "setup-input") as HTMLInputElement;
+				field.placeholder = setup.prompt.placeholder ?? "";
+				const submit = () => this.command("loginCode", field.value);
+				field.addEventListener("keydown", (event) => {
+					if (event.key === "Enter") submit();
+				});
+				parts.push(field);
+				actions.append(button("Submit", submit));
+			}
+			if (setup.url) actions.prepend(button("Open Sign-in Page", () => this.command("openLoginUrl"), !setup.code));
+			actions.append(button("Cancel", () => this.command("cancelLogin")));
+		}
+		this.setupCard.replaceChildren(create("div", "setup-card"));
+		this.setupCard.firstElementChild?.append(...parts, actions);
 	}
 
 	/** Terminal-style tabs: one pi process each; click to switch, trash to stop and remove. */
@@ -269,7 +374,79 @@ export class Controls {
 		else if (menu === "models") this.openModels();
 		else if (menu === "thinking") this.openEffort();
 		else if (menu === "forks") this.openForks();
+		else if (menu === "settings") this.openSettings();
+		else if (menu === "providers") this.openProviders();
 		else this.startRename();
+	}
+
+	private openSettings(): void {
+		const items: MenuItem[] = [
+			{ label: "Model providers...", description: "Sign in, enter an API key, or sign out", value: "providers" },
+			{ label: "Choose model...", value: "models" },
+			{
+				label: "Extension settings",
+				description: "Approval mode, pi arguments, Node.js path",
+				value: "openSettings",
+			},
+			{
+				label: "pi settings file",
+				description: "settings.json shared with pi in the terminal",
+				value: "openPiSettings",
+			},
+			{ label: "Show log", value: "showLog" },
+		];
+		this.headerMenu.open({
+			sections: [{ title: "Settings", items }],
+			onSelect: (item) => {
+				if (item.value === "providers") this.openProviders();
+				else if (item.value === "models") this.openModels();
+				else this.command(item.value as PanelCommand);
+			},
+		});
+	}
+
+	/** Providers supporting `method`, or all providers with their sign-in and sign-out actions. */
+	private openProviders(method?: LoginRequest["method"]): void {
+		this.headerMenu.open({
+			sections: undefined,
+			searchable: true,
+			placeholder:
+				method === "oauth"
+					? "Sign in with which account?"
+					: method === "api_key"
+						? "API key for which provider?"
+						: "Model providers",
+			emptyText: "No providers",
+			onSelect: (item) => this.chooseProvider(JSON.parse(item.value) as ProviderChoice, method),
+		});
+		this.query("providers", method ?? "", (items) => this.headerMenu.update([{ items }]));
+	}
+
+	private chooseProvider(provider: ProviderChoice, method: LoginRequest["method"] | undefined): void {
+		const login = (chosen: LoginRequest["method"]) =>
+			this.command(
+				"login",
+				JSON.stringify({ provider: provider.id, name: provider.name, method: chosen } satisfies LoginRequest),
+			);
+		if (method) {
+			login(method);
+			return;
+		}
+		const actions: MenuItem[] = [];
+		if (provider.oauth) actions.push({ label: provider.oauth, value: "oauth" });
+		if (provider.apiKey) {
+			actions.push({ label: provider.configured ? "Replace API key..." : "Enter API key...", value: "api_key" });
+		}
+		if (provider.configured) {
+			actions.push({ label: "Sign out", description: "Remove stored credentials", value: "logout" });
+		}
+		this.headerMenu.open({
+			sections: [{ title: provider.name, items: actions }],
+			onSelect: (item) => {
+				if (item.value === "logout") this.command("logout", provider.id);
+				else login(item.value as LoginRequest["method"]);
+			},
+		});
 	}
 
 	queryResult(id: number, items: MenuItem[]): void {
@@ -333,6 +510,7 @@ export class Controls {
 			{ passive: false },
 		);
 		element("history").addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSessions()));
+		element("settings").addEventListener("click", () => this.toggle(this.headerMenu, () => this.openSettings()));
 		element("model").addEventListener("click", () => (this.effort.hidden ? this.openEffort() : this.closeEffort()));
 		element("effort-title").addEventListener("click", () => {
 			this.closeEffort();
@@ -683,7 +861,7 @@ export class Controls {
 		const hasContent = this.input.value.trim().length > 0 || this.draft.length > 0;
 		const stop = this.running && !hasContent;
 		this.sendButton.classList.toggle("stop", stop);
-		this.sendButton.disabled = !stop && !hasContent;
+		this.sendButton.disabled = (!stop && !hasContent) || (!!this.meta.setup && !stop);
 		this.sendButton.title = stop ? "Stop (Esc)" : this.running ? "Steer (Enter)" : "Send (Enter)";
 	}
 
@@ -692,6 +870,8 @@ export class Controls {
 		this.input.style.height = `${Math.min(this.input.scrollHeight, 240)}px`;
 	}
 }
+
+const INPUT_PLACEHOLDER = "Ask pi anything. / for commands, @ for files";
 
 function capitalize(text: string): string {
 	return text.charAt(0).toUpperCase() + text.slice(1);

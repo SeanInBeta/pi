@@ -3,9 +3,13 @@
  * command palette QuickPicks; kept free of the vscode module so they can be tested.
  */
 import type { ModelInfo } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
-import type { RpcSessionSummary, RpcSlashCommand } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
+import type {
+	RpcAuthProvider,
+	RpcSessionSummary,
+	RpcSlashCommand,
+} from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import { fuzzyFilter } from "../../tui/src/fuzzy.ts";
-import type { MenuItem } from "./chat-types.ts";
+import type { MenuItem, ProviderChoice } from "./chat-types.ts";
 
 const MAX_FILES = 50;
 
@@ -24,6 +28,40 @@ export function sessionItems(sessions: readonly RpcSessionSummary[], currentPath
 /** A session's name, or the first line of its first message. */
 export function sessionTitle(session: Pick<RpcSessionSummary, "name" | "firstMessage">): string | undefined {
 	return session.name ?? firstLine(session.firstMessage);
+}
+
+/**
+ * Providers that support `method` (all when undefined), configured ones first. Values are
+ * {@link ProviderChoice} as JSON, so the panel can offer the provider's login methods.
+ */
+export function providerItems(
+	providers: readonly RpcAuthProvider[],
+	method: "oauth" | "api_key" | undefined,
+): MenuItem[] {
+	const supported = providers.filter((provider) =>
+		method === "oauth"
+			? !!provider.oauth
+			: method === "api_key"
+				? provider.apiKey
+				: !!provider.oauth || provider.apiKey,
+	);
+	return [...supported.filter((p) => p.configured), ...supported.filter((p) => !p.configured)].map((provider) => {
+		const choice: ProviderChoice = {
+			id: provider.id,
+			name: provider.name,
+			oauth: provider.oauth?.label,
+			apiKey: provider.apiKey,
+			configured: provider.configured,
+		};
+		const methods = [provider.oauth ? "account" : undefined, provider.apiKey ? "API key" : undefined].filter(Boolean);
+		return {
+			label: provider.name,
+			description: provider.configured ? `Configured${provider.source ? ` (${provider.source})` : ""}` : undefined,
+			detail: method ? undefined : `Sign in with ${methods.join(" or ")}`,
+			value: JSON.stringify(choice),
+			current: provider.configured,
+		};
+	});
 }
 
 /** The current model first, then the others in pi's order. Values are `{ provider, id }` as JSON. */

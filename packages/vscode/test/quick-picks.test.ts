@@ -4,6 +4,7 @@ import {
 	fileItems,
 	forkItems,
 	modelItems,
+	providerItems,
 	sessionItems,
 	thinkingLevelItems,
 } from "../src/quick-picks.ts";
@@ -98,5 +99,35 @@ describe("menu items", () => {
 			value: "src/extension.ts",
 		});
 		expect(fileItems(paths, "zzz")).toEqual([]);
+	});
+
+	it("lists providers for a login method, configured ones first", () => {
+		const providers = [
+			{
+				id: "anthropic",
+				name: "Anthropic",
+				oauth: { label: "Sign in to Anthropic" },
+				apiKey: true,
+				configured: false,
+			},
+			{ id: "bedrock", name: "Amazon Bedrock", apiKey: false, configured: false },
+			{ id: "openai", name: "OpenAI", apiKey: true, configured: true, source: "OPENAI_API_KEY" },
+		];
+
+		const apiKey = providerItems(providers, "api_key");
+		expect(apiKey.map((item) => item.label)).toEqual(["OpenAI", "Anthropic"]);
+		expect(apiKey[0]).toMatchObject({ description: "Configured (OPENAI_API_KEY)", current: true });
+		expect(providerItems(providers, "oauth").map((item) => item.label)).toEqual(["Anthropic"]);
+
+		const all = providerItems(providers, undefined);
+		expect(all.map((item) => item.label)).toEqual(["OpenAI", "Anthropic"]);
+		expect(all[1]?.detail).toBe("Sign in with account or API key");
+		expect(JSON.parse(all[1]!.value)).toEqual({
+			id: "anthropic",
+			name: "Anthropic",
+			oauth: "Sign in to Anthropic",
+			apiKey: true,
+			configured: false,
+		});
 	});
 });

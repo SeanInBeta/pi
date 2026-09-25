@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
 
@@ -45,8 +46,39 @@ export function bundledRuntime(
 }
 
 export function supportsPi(nodeVersion: string): boolean {
-	const [major = 0, minor = 0] = nodeVersion.split(".").map(Number);
+	const [major = 0, minor = 0] = nodeVersion.replace(/^v/, "").split(".").map(Number);
 	return major > MIN_NODE[0] || (major === MIN_NODE[0] && minor >= MIN_NODE[1]);
+}
+
+/** pi cannot run because Node.js is missing or too old. */
+export class NodeVersionError extends Error {}
+
+/**
+ * Check that the runtime's Node.js can run pi, before starting it. VS Code's own Node (ELECTRON_RUN_AS_NODE)
+ * was already checked by {@link bundledRuntime}; any other `node` is asked for its version.
+ * `hostNodeVersion` is VS Code's Node version, named in the error so the user knows why it was not used.
+ */
+export async function checkRuntime(runtime: PiRuntime, hostNodeVersion: string): Promise<void> {
+	if (runtime.env.ELECTRON_RUN_AS_NODE) return;
+	const required = `Node.js ${MIN_NODE.join(".")} or newer`;
+	const fix = `Install ${required} and make sure \`node\` is on PATH, or set the path in the "pi.nodePath" setting.`;
+	const hostNote = supportsPi(hostNodeVersion) ? "" : ` VS Code's built-in Node.js ${hostNodeVersion} is too old.`;
+	const version = await nodeVersion(runtime.command);
+	if (!version) {
+		throw new NodeVersionError(`pi needs ${required}, but "${runtime.command}" could not be run.${hostNote} ${fix}`);
+	}
+	if (!supportsPi(version)) {
+		throw new NodeVersionError(`pi needs ${required}, but "${runtime.command}" is ${version}.${hostNote} ${fix}`);
+	}
+}
+
+function nodeVersion(command: string): Promise<string | undefined> {
+	return new Promise((resolve) => {
+		execFile(command, ["--version"], { timeout: 10_000, windowsHide: true }, (error, stdout) => {
+			const version = stdout.trim();
+			resolve(error || !/^v\d+\.\d+/.test(version) ? undefined : version);
+		});
+	});
 }
 
 export interface PiLaunchOptions {

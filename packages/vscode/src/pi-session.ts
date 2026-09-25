@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
-import type { RpcExtensionUIRequest } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
+import type {
+	RpcAuthEvent,
+	RpcAuthProvider,
+	RpcExtensionUIRequest,
+	RpcLoginResult,
+} from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import { type ChatAction, createChatState, reduceChat } from "./chat-state.ts";
 import type { ChatState, MenuItem, MenuQuery, PanelCommand, TabState } from "./chat-types.ts";
-import { createPiClient, type PiRuntime } from "./pi-launch.ts";
+import { checkRuntime, createPiClient, NodeVersionError, type PiRuntime } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
 import { commandItems, forkItems, modelItems, sessionItems } from "./quick-picks.ts";
 
@@ -35,6 +40,13 @@ export interface PiSessionHost {
 	settled(session: PiSession): void;
 	/** Put text in the composer if this session is shown. */
 	setInput(session: PiSession, text: string): void;
+	/** Progress of a running login: a browser URL, a device code, or a status message. */
+	authEvent(session: PiSession, event: RpcAuthEvent["event"]): void;
+}
+
+/** Whether pi reported a real model; without credentials it reports a placeholder with provider "unknown". */
+export function hasModel(info: SessionInfo): boolean {
+	return !!info.model && info.model.provider !== "unknown";
 }
 
 /**
@@ -46,6 +58,8 @@ export class PiSession {
 	state: ChatState = createChatState();
 	info: SessionInfo;
 	status: PiStatus = "stopped";
+	/** Why the last start failed; cleared by the next successful start. */
+	startError: { message: string; node: boolean } | undefined;
 	/** How the last run ended; the tab dot turns green or red. */
 	private outcome: "none" | "done" | "failed" = "none";
 	/** A file change of this tab waits for Accept or Reject. */
@@ -94,9 +108,24 @@ export class PiSession {
 	/** Start pi, or return the running client. Concurrent callers share one process. */
 	start(): Promise<RpcClient> {
 		if (this.client) return Promise.resolve(this.client);
-		this.starting ??= this.spawn().finally(() => {
-			this.starting = undefined;
-		});
+		this.starting ??= this.spawn()
+			.then(
+				(client) => {
+					this.startError = undefined;
+					return client;
+				},
+				(error: unknown) => {
+					this.startError = {
+						message: error instanceof Error ? error.message : String(error),
+						node: error instanceof NodeVersionError,
+					};
+					this.host.infoChanged(this);
+					throw error;
+				},
+			)
+			.finally(() => {
+				this.starting = undefined;
+			});
 		return this.starting;
 	}
 
@@ -147,7 +176,7 @@ export class PiSession {
 	}
 
 	/** Items for an in-panel menu. */
-	async query(query: Exclude<MenuQuery, "files">): Promise<MenuItem[]> {
+	async query(query: Exclude<MenuQuery, "files" | "providers">): Promise<MenuItem[]> {
 		const client = await this.start();
 		switch (query) {
 			case "sessions":
@@ -230,6 +259,28 @@ export class PiSession {
 		}
 	}
 
+	async authProviders(): Promise<RpcAuthProvider[]> {
+		return (await this.start()).getAuthProviders();
+	}
+
+	/** Sign in, then show the model pi selected. Prompts arrive as UI requests, progress as auth events. */
+	async login(provider: string, method: "oauth" | "api_key"): Promise<RpcLoginResult> {
+		const client = await this.start();
+		const result = await client.login(provider, method);
+		await this.refresh(client);
+		return result;
+	}
+
+	async abortLogin(): Promise<void> {
+		await this.client?.abortLogin();
+	}
+
+	async logout(provider: string): Promise<void> {
+		const client = await this.start();
+		await client.logout(provider);
+		await this.refresh(client);
+	}
+
 	respondToUI(...args: Parameters<RpcClient["sendExtensionUIResponse"]>): void {
 		this.client?.sendExtensionUIResponse(...args);
 	}
@@ -268,6 +319,7 @@ export class PiSession {
 		const config = vscode.workspace.getConfiguration("pi");
 		const sessionFile = this.info.sessionFile;
 		const runtime = this.host.runtime();
+		await checkRuntime(runtime, process.versions.node);
 		const client = createPiClient({
 			runtime,
 			cwd,
@@ -284,6 +336,10 @@ export class PiSession {
 			const metadata = "metadata" in request && request.metadata ? "[metadata]" : undefined;
 			this.host.log(this, JSON.stringify({ ...request, metadata }));
 			this.host.uiRequest(this, request);
+		});
+		client.onAuthEvent((event) => {
+			this.host.log(this, JSON.stringify(event));
+			this.host.authEvent(this, event.event);
 		});
 		client.onEvent((event) => {
 			this.host.log(this, JSON.stringify(event));
