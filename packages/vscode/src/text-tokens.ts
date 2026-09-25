@@ -30,3 +30,19 @@ export function splitTokens(text: string, isCommand: (name: string) => boolean):
 	if (last < text.length) parts.push({ text: text.slice(last) });
 	return parts;
 }
+
+/** The `@path` or `/command` token that ends exactly at `offset`, as a `[start, end)` range. */
+export function tokenEndingAt(
+	text: string,
+	offset: number,
+	isCommand: (name: string) => boolean,
+): { start: number; end: number } | undefined {
+	let start = 0;
+	for (const part of splitTokens(text, isCommand)) {
+		const end = start + part.text.length;
+		if (part.kind && end === offset) return { start, end };
+		if (end >= offset) return undefined;
+		start = end;
+	}
+	return undefined;
+}

@@ -528,6 +528,12 @@ button {
 	background: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 20%, transparent);
 }
 
+/* Selected by the first Backspace; the next Backspace deletes it. */
+.token-selected {
+	background: color-mix(in srgb, currentColor 38%, transparent);
+	box-shadow: 0 0 0 1px currentColor;
+}
+
 .toolbar {
 	display: flex;
 	align-items: center;

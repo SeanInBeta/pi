@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitTokens } from "../src/text-tokens.ts";
+import { splitTokens, tokenEndingAt } from "../src/text-tokens.ts";
 
 const known = (name: string) => name === "model" || name === "review";
 
@@ -19,5 +19,23 @@ describe("splitTokens", () => {
 		expect(splitTokens("see /usr/bin and me@example.com /nope", known)).toEqual([
 			{ text: "see /usr/bin and me@example.com /nope" },
 		]);
+	});
+});
+
+describe("tokenEndingAt", () => {
+	const known = (name: string) => name === "review";
+	const text = "see @src/a.ts and /skill:x /review /usr/bin";
+
+	it("finds the token that ends at the offset", () => {
+		expect(tokenEndingAt(text, 13, known)).toEqual({ start: 4, end: 13 });
+		expect(tokenEndingAt(text, 26, known)).toEqual({ start: 18, end: 26 });
+		expect(tokenEndingAt(text, 34, known)).toEqual({ start: 27, end: 34 });
+	});
+
+	it("ignores offsets inside or after a token and plain paths", () => {
+		expect(tokenEndingAt(text, 12, known)).toBeUndefined();
+		expect(tokenEndingAt(text, 14, known)).toBeUndefined();
+		expect(tokenEndingAt(text, text.length, known)).toBeUndefined();
+		expect(tokenEndingAt("", 0, known)).toBeUndefined();
 	});
 });

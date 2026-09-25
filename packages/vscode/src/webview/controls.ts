@@ -8,6 +8,7 @@ import type {
 	PanelMeta,
 	WebviewMessage,
 } from "../chat-types.ts";
+import { tokenEndingAt } from "../text-tokens.ts";
 import { Menu, type MenuOptions } from "./menu.ts";
 import { renderTokens } from "./tokens.ts";
 
@@ -54,6 +55,8 @@ export class Controls {
 	private readonly modelLabel = element<HTMLElement>("model-label");
 	private readonly approvalLabel = element<HTMLElement>("approval-label");
 	private readonly highlight = element<HTMLElement>("input-highlight");
+	/** The token that the first Backspace selected; a second Backspace deletes it. */
+	private selectedToken: { start: number; end: number } | undefined;
 	private readonly tabScroll = element<HTMLElement>("tab-scroll");
 	private readonly tabScrollThumb = element<HTMLElement>("tab-scroll-thumb");
 	private shownTabId: string | undefined;
@@ -235,8 +238,25 @@ export class Controls {
 		this.autoResize();
 		this.updateSendButton();
 		// A trailing space keeps the layer as tall as the textarea when the text ends with a newline.
-		renderTokens(this.highlight, `${this.input.value} `, this.isCommand);
+		renderTokens(this.highlight, `${this.input.value} `, this.isCommand, this.selectedToken?.start);
 		this.highlight.scrollTop = this.input.scrollTop;
+	}
+
+	/**
+	 * First Backspace right after an `@path` or `/command` token selects the whole token instead of deleting a
+	 * character; the second Backspace then deletes the selection like any other.
+	 */
+	private selectTokenBeforeCaret(event: KeyboardEvent): boolean {
+		if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+		const { selectionStart, selectionEnd } = this.input;
+		if (selectionStart !== selectionEnd) return false;
+		const token = tokenEndingAt(this.input.value, selectionStart, this.isCommand);
+		if (!token) return false;
+		this.selectedToken = token;
+		this.input.setSelectionRange(token.start, token.end);
+		if (this.composerMode === "commands" || this.composerMode === "files") this.composerMenu.close();
+		this.inputChanged();
+		return true;
 	}
 
 	openMenu(menu: PanelMenu): void {
@@ -263,7 +283,9 @@ export class Controls {
 				event.preventDefault();
 				return;
 			}
-			if (event.key === "Enter" && !event.shiftKey) {
+			if (event.key === "Backspace" && this.selectTokenBeforeCaret(event)) {
+				event.preventDefault();
+			} else if (event.key === "Enter" && !event.shiftKey) {
 				event.preventDefault();
 				this.submit();
 			} else if (event.key === "Escape" && this.running) {
@@ -272,8 +294,16 @@ export class Controls {
 			}
 		});
 		this.input.addEventListener("input", () => {
+			this.selectedToken = undefined;
 			this.inputChanged();
 			this.updateInlineMenu();
+		});
+		// Moving the caret or selection in any other way drops the token selection.
+		document.addEventListener("selectionchange", () => {
+			const token = this.selectedToken;
+			if (!token || (this.input.selectionStart === token.start && this.input.selectionEnd === token.end)) return;
+			this.selectedToken = undefined;
+			this.inputChanged();
 		});
 		this.input.addEventListener("scroll", () => {
 			this.highlight.scrollTop = this.input.scrollTop;
