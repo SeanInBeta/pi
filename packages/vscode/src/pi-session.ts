@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
 import type { RpcExtensionUIRequest } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import { type ChatAction, createChatState, reduceChat } from "./chat-state.ts";
 import type { ChatState, MenuItem, MenuQuery, PanelCommand, TabState } from "./chat-types.ts";
-import { createPiClient } from "./pi-launch.ts";
+import { createPiClient, type PiRuntime } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
 import { commandItems, forkItems, modelItems, sessionItems } from "./quick-picks.ts";
 
@@ -24,7 +23,8 @@ export interface SessionInfo {
 }
 
 export interface PiSessionHost {
-	extensionPath: string;
+	/** How to start pi: from source in development, the bundled runtime when installed. */
+	runtime(): PiRuntime;
 	log(session: PiSession, line: string): void;
 	/** The transcript changed; `prev` is the state before the change. */
 	stateChanged(session: PiSession, prev: ChatState): void;
@@ -267,14 +267,14 @@ export class PiSession {
 
 		const config = vscode.workspace.getConfiguration("pi");
 		const sessionFile = this.info.sessionFile;
+		const runtime = this.host.runtime();
 		const client = createPiClient({
-			extensionPath: this.host.extensionPath,
+			runtime,
 			cwd,
-			cliPath: config.get<string>("cliPath") || undefined,
 			args: [
 				// Reviews are always routed to VS Code; the approval mode decides whether they need a click.
 				"--extension",
-				join(this.host.extensionPath, "src", "pi-extension", "review-changes.ts"),
+				runtime.reviewExtension,
 				...(config.get<string[]>("args") ?? []),
 				...(sessionFile ? ["--session", sessionFile] : []),
 			],

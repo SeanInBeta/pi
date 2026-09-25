@@ -12,6 +12,7 @@ import { ChatViewProvider } from "./chat-view.ts";
 import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
 import { ExtensionUIBridge, type UITarget } from "./extension-ui.ts";
 import { ACCEPT, REJECT } from "./file-change.ts";
+import { bundledRuntime, devRuntime, type PiRuntime } from "./pi-launch.ts";
 import { PiSession, type PiSessionHost } from "./pi-session.ts";
 import { fileItems } from "./quick-picks.ts";
 
@@ -27,7 +28,9 @@ interface SavedTabs {
 class PiController implements vscode.Disposable, PiSessionHost {
 	readonly chat: ChatViewProvider;
 	readonly ui: ExtensionUIBridge;
-	readonly extensionPath: string;
+	private readonly extensionPath: string;
+	/** Installed from a VSIX: run the bundled pi; in the Extension Development Host: pi from source. */
+	private readonly bundled: boolean;
 	private readonly output = vscode.window.createOutputChannel("Pi");
 	private readonly statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
 	private readonly modelItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
@@ -38,8 +41,9 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	private lastMeta = "";
 	private files: { at: number; paths: string[] } | undefined;
 
-	constructor(extensionUri: vscode.Uri, workspaceState: vscode.Memento) {
+	constructor(extensionUri: vscode.Uri, workspaceState: vscode.Memento, bundled: boolean) {
 		this.extensionPath = extensionUri.fsPath;
+		this.bundled = bundled;
 		this.workspaceState = workspaceState;
 		this.chat = new ChatViewProvider(extensionUri, {
 			submit: (text) => this.run(() => this.withActive((session) => session.serial(() => session.submit(text)))),
@@ -80,6 +84,20 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	}
 
 	// PiSessionHost
+
+	runtime(): PiRuntime {
+		const config = vscode.workspace.getConfiguration("pi");
+		const runtime = this.bundled
+			? bundledRuntime(
+					this.extensionPath,
+					{ execPath: process.execPath, nodeVersion: process.versions.node },
+					config.get<string>("nodePath") || undefined,
+				)
+			: devRuntime(this.extensionPath);
+		// pi.cliPath points at another pi entry point, run with node.
+		const cliPath = config.get<string>("cliPath");
+		return cliPath ? { ...runtime, command: "node", cliPath, env: {} } : runtime;
+	}
 
 	log(session: PiSession, line: string): void {
 		this.output.appendLine(this.sessions.length > 1 ? `[${session.title}] ${line}` : line);
@@ -406,7 +424,11 @@ class PiController implements vscode.Disposable, PiSessionHost {
 let controller: PiController | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-	const pi = new PiController(context.extensionUri, context.workspaceState);
+	const pi = new PiController(
+		context.extensionUri,
+		context.workspaceState,
+		context.extensionMode === vscode.ExtensionMode.Production,
+	);
 	controller = pi;
 	context.subscriptions.push(
 		pi,

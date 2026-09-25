@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
 import type { RpcExtensionUIRequest } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import { ACCEPT, isCommandReviewMetadata, isFileChangeMetadata, REJECT } from "../src/file-change.ts";
-import { createPiClient } from "../src/pi-launch.ts";
+import { createPiClient, devRuntime } from "../src/pi-launch.ts";
 
 const extensionPath = fileURLToPath(new URL("..", import.meta.url));
 const reviewExtension = fileURLToPath(new URL("../src/pi-extension/review-changes.ts", import.meta.url));
@@ -28,7 +28,7 @@ describe("review-changes pi extension", () => {
 		writeFileSync(join(cwd, "sample.ts"), "export function add(a: number, b: number) {\n\treturn a + b;\n}\n");
 		const requests: RpcExtensionUIRequest[] = [];
 		const started = createPiClient({
-			extensionPath,
+			runtime: devRuntime(extensionPath),
 			cwd,
 			args: [
 				"--no-session",

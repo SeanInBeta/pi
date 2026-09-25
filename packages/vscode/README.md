@@ -1,6 +1,6 @@
-# pi-vscode
+# pi-vscode-plugin
 
-Experimental VS Code extension for pi. Private, not published.
+Experimental VS Code extension for pi. Not yet published; install the packaged VSIX (see [Packaging](#packaging)).
 
 Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace folder and shows a chat panel in the Pi activity bar view. The raw event stream is also written to the `Pi` output channel.
 
@@ -32,7 +32,7 @@ For `edit` and `write`:
 
 Closing the diff tab does not decide; the review stays pending until Accept, Reject or Abort. Reviews are shown one at a time.
 
-How it works: the extension always starts pi with `--extension src/pi-extension/review-changes.ts`. That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`, and handles pi's `tool_call` event to review file-changing `bash` and `powershell` commands before they run (a rejected call is blocked). The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
+How it works: the extension always starts pi with the review extension (`src/pi-extension/review-changes.ts` in development, its compiled copy `dist/pi-extension/review-changes.js` in the VSIX). That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`, and handles pi's `tool_call` event to review file-changing `bash` and `powershell` commands before they run (a rejected call is blocked). The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
 
 ## Extension dialogs
 
@@ -126,7 +126,8 @@ Code layout:
 
 ## Settings
 
-- `pi.cliPath`: JavaScript entry of the pi CLI, run with `node`. Empty uses `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source through `tsx`, so pi does not need to be built.
+- `pi.cliPath`: another pi CLI entry point, run with `node`. Empty uses the pi bundled in the VSIX, or in development `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source through `tsx`, so pi does not need to be built.
+- `pi.nodePath`: Node.js executable for the bundled pi. Empty uses VS Code's own Node when it is 22.19 or later, otherwise `node` from `PATH`.
 - `pi.args`: extra pi CLI arguments, for example `["--provider", "anthropic", "--model", "claude-sonnet-5"]`.
 - `pi.approvalMode`: `ask` (default) reviews every edit and write in a diff editor first; `auto` applies them directly. Also switchable in the composer.
 
@@ -155,9 +156,30 @@ cd packages/vscode
 node ../../node_modules/vitest/dist/cli.js --run
 ```
 
+## Packaging
+
+```bash
+npm install --ignore-scripts          # from the repository root
+npm run hydrate:model-data            # from the repository root
+npm --prefix packages/vscode run package
+code --install-extension packages/vscode/pi-vscode-plugin-<version>.vsix
+```
+
+`npm run package` runs `scripts/build-package.mjs`, then `vsce package`. The VSIX is self-contained: it needs neither this repository nor a global pi.
+
+| Path in the VSIX | Content |
+|---|---|
+| `dist/extension.cjs`, `dist/webview/` | Extension and chat panel, bundled and minified |
+| `dist/pi-extension/review-changes.js` | The review extension, compiled; its `@earendil-works/*` imports resolve to the modules inside the bundled pi |
+| `dist/pi/` | pi, bundled from this repository's source (so it includes this fork's pi changes), laid out like pi's npm package: `dist/bundle/rpc-entry.js`, themes, docs, examples, and `node_modules` with `jiti` (loads TypeScript extensions) and `photon-node` (image resizing) |
+| `dist/THIRD_PARTY_NOTICES.txt` | Licenses of all bundled packages |
+
+The installed extension (VS Code's production mode) runs `dist/pi` with `PI_PACKAGE_DIR` pointing at it. It uses VS Code's own Node (the editor binary with `ELECTRON_RUN_AS_NODE=1`) when that is 22.19 or later, as pi requires; older VS Code builds fall back to `node` from `PATH`, or `pi.nodePath`. The Extension Development Host keeps running pi from source as described under [Development](#development).
+
+pi reads its settings, auth and sessions from `~/.pi/agent` as usual, so an existing pi login is reused.
+
 ## Known limitations
 
-- `src/pi-extension/review-changes.ts` is loaded from the extension folder as TypeScript, which works for the source checkout; a published build will need to ship it.
 - A slash command sent while pi is working is queued as a steering message, not run as a command.
 - In RPC mode pi cannot show its project trust prompt, so project `.pi` extensions, skills and prompts load only with `--approve` in `pi.args`, a saved `/trust` decision, or `defaultProjectTrust: "always"`.
 - If the pi process exits unexpectedly, run `Pi: Stop` and then `Pi: Start`.

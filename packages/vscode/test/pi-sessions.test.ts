@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createChatState, reduceChat } from "../src/chat-state.ts";
-import { createPiClient } from "../src/pi-launch.ts";
+import { createPiClient, devRuntime } from "../src/pi-launch.ts";
 
 const extensionPath = fileURLToPath(new URL("..", import.meta.url));
 const smokeProvider = fileURLToPath(new URL("./fixtures/smoke-provider.ts", import.meta.url));
@@ -20,7 +20,7 @@ describe("sessions through the source launcher", () => {
 	it("lists, switches to, and forks a saved session", async () => {
 		root = mkdtempSync(join(tmpdir(), "pi-vscode-sessions-"));
 		const client = createPiClient({
-			extensionPath,
+			runtime: devRuntime(extensionPath),
 			cwd: root,
 			args: [
 				"--session-dir",

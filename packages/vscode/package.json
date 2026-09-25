@@ -1,16 +1,32 @@
 {
-	"name": "pi-vscode",
+	"name": "pi-vscode-plugin",
 	"displayName": "Pi",
-	"description": "VS Code integration for the pi coding agent",
+	"description": "Chat with the pi coding agent in VS Code: streaming answers, editor context, sessions, and reviewed file changes.",
 	"version": "0.87.1",
-	"private": true,
-	"publisher": "earendil-works",
+	"publisher": "seaninbeta",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/SeanInBeta/pi.git",
+		"directory": "packages/vscode"
+	},
+	"private": true,
 	"type": "module",
 	"main": "./dist/extension.cjs",
 	"engines": {
 		"vscode": "^1.100.0"
 	},
+	"categories": [
+		"AI",
+		"Chat"
+	],
+	"keywords": [
+		"pi",
+		"agent",
+		"ai",
+		"coding agent",
+		"chat"
+	],
 	"contributes": {
 		"viewsContainers": {
 			"activitybar": [
@@ -167,7 +183,7 @@
 				"pi.cliPath": {
 					"type": "string",
 					"default": "",
-					"description": "JavaScript entry point of the pi CLI, run with node. Empty uses the monorepo-local source launcher (scripts/pi-dev-rpc.mjs)."
+					"description": "Another pi CLI entry point to run with node instead of the bundled pi (or, in development, the monorepo source launcher). Leave empty normally."
 				},
 				"pi.args": {
 					"type": "array",
@@ -189,6 +205,11 @@
 					],
 					"default": "ask",
 					"description": "Whether pi's file edits wait for your approval. Also switchable in the chat panel."
+				},
+				"pi.nodePath": {
+					"type": "string",
+					"default": "",
+					"description": "Node.js executable for the bundled pi. Empty uses VS Code's own Node when it is new enough (22.19 or later), otherwise node from PATH."
 				}
 			}
 		}
@@ -196,7 +217,9 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --sourcemap --outfile=dist/extension.cjs && esbuild src/webview/main.ts src/webview/style.css --bundle --platform=browser --format=iife --target=es2022 --sourcemap --outdir=dist/webview",
-		"test": "vitest --run"
+		"test": "vitest --run",
+		"build:package": "node scripts/build-package.mjs",
+		"package": "node scripts/build-package.mjs && npx --yes @vscode/vsce@4.0.0 package --no-dependencies"
 	},
 	"devDependencies": {
 		"@types/vscode": "1.100.0",
