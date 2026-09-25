@@ -22,6 +22,8 @@ export interface ChatViewHandlers {
 	command(command: PanelCommand, arg: string | undefined): Promise<void>;
 	/** The webview loaded (or reloaded). */
 	ready(): void;
+	/** Accept or Reject clicked under a tool call. */
+	review(id: string, choice: "Accept" | "Reject"): void;
 }
 
 /**
@@ -63,6 +65,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					.then((items) => this.post({ type: "queryResult", id: message.id, items }));
 			} else if (message.type === "command") {
 				void this.handlers.command(message.command, message.arg);
+			} else if (message.type === "review") {
+				this.handlers.review(message.id, message.choice);
 			} else if (message.type === "copyText") {
 				void vscode.env.clipboard.writeText(message.text);
 			}
@@ -131,11 +135,7 @@ function renderHtml(webview: vscode.Webview, assets: vscode.Uri): string {
 	<div class="composer-wrap">
 		<div id="composer-menu" class="menu"></div>
 		<div id="effort" class="menu effort" hidden>
-			<div class="effort-head">
-				<span class="effort-side"></span>
-				<button type="button" id="effort-title" class="effort-title" title="Choose model"><span id="effort-level"></span>${ICONS.chevronRight}</button>
-				<button type="button" id="effort-reset" class="icon-button effort-side" title="Reset thinking level">${ICONS.reset}</button>
-			</div>
+			<button type="button" id="effort-title" class="effort-title" title="Choose model"><span id="effort-level"></span>${ICONS.chevronRight}</button>
 			<div id="effort-model" class="effort-model"></div>
 			<div id="effort-slider" class="effort-slider">
 				<div id="effort-dots" class="effort-dots"></div>
@@ -175,7 +175,6 @@ const ICONS = {
 	chevron: '<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>',
 	chevronRight:
 		'<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 4.5 10 8l-3.5 3.5" /></svg>',
-	reset: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5V5h2.5" /></svg>',
 	arrowUp: '<svg class="icon send-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4" /></svg>',
 	stop: '<svg class="icon stop-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1" /></svg>',
 };

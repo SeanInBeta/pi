@@ -1,7 +1,8 @@
 import { basename } from "node:path";
 import * as vscode from "vscode";
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
-import { ACCEPT, type FileChangeMetadata, isFileChangeMetadata, REJECT } from "./file-change.ts";
+import type { PendingReview } from "./chat-types.ts";
+import { ACCEPT, type FileChangeMetadata, isFileChangeMetadata, type REJECT } from "./file-change.ts";
 
 const PROPOSED_SCHEME = "pi-proposed";
 const REVIEW_CONTEXT = "pi.reviewPending";
@@ -16,8 +17,9 @@ export interface UITarget {
 	respond(response: RpcExtensionUIResponse): void;
 	/** Put text in the chat composer. */
 	setInput(text: string): void;
-	/** Show or clear a transient chat status such as a pending review. */
-	setStatus(status: string | undefined): void;
+	/** Show a pending review's Accept and Reject buttons in the chat, under the tool call. */
+	startReview(review: PendingReview, path: string): void;
+	endReview(id: string): void;
 }
 
 export interface ExtensionUIHost {
@@ -39,6 +41,7 @@ export class ExtensionUIBridge implements vscode.Disposable {
 	/** Open dialogs and the tab each belongs to. */
 	private readonly open = new Map<vscode.CancellationTokenSource, string>();
 	private decide: ((choice: string | undefined) => void) | undefined;
+	private reviewId: string | undefined;
 	private nextId = 0;
 
 	constructor(host: ExtensionUIHost) {
@@ -87,8 +90,12 @@ export class ExtensionUIBridge implements vscode.Disposable {
 		}
 	}
 
-	/** Answer from the Accept and Reject buttons of the review diff editor. */
-	resolveReview(choice: typeof ACCEPT | typeof REJECT): void {
+	/**
+	 * Answer the pending review, from the chat buttons or the diff editor's title buttons. A chat button
+	 * passes its review id, so a click on an outdated button cannot answer a newer review.
+	 */
+	resolveReview(choice: typeof ACCEPT | typeof REJECT, id?: string): void {
+		if (id !== undefined && id !== this.reviewId) return;
 		this.decide?.(choice);
 	}
 
@@ -185,31 +192,24 @@ export class ExtensionUIBridge implements vscode.Disposable {
 			this.decide = resolve;
 			token.onCancellationRequested(() => resolve(undefined));
 		});
+		const review: PendingReview = { id: `review-${id}`, tool: change.tool, label };
+		this.reviewId = review.id;
 		try {
-			target.setStatus(`Review ${change.tool} of ${label}`);
+			target.startReview(review, change.path);
 			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, true);
 			await vscode.commands.executeCommand(
 				"vscode.diff",
 				original,
 				proposed,
 				`${basename(change.path)}: pi's proposed ${change.tool}${exists ? "" : " (new file)"}`,
-				{ preview: false },
+				{ preview: false, preserveFocus: true },
 			);
-			void vscode.window
-				.showInformationMessage(
-					`pi (${target.label()}) wants to ${change.tool} ${label}.`,
-					{ detail: "Review the diff." },
-					ACCEPT,
-					REJECT,
-				)
-				.then((choice) => {
-					if (choice) this.decide?.(choice);
-				});
 			return await decision;
 		} finally {
 			this.decide = undefined;
+			this.reviewId = undefined;
 			this.proposed.delete(id);
-			target.setStatus(undefined);
+			target.endReview(review.id);
 			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, false);
 			await closeDiff(proposed);
 		}

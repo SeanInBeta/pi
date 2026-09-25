@@ -1,4 +1,12 @@
-import type { AssistantBlock, Attachment, ChatItem, HostMessage, ToolRun, WebviewMessage } from "../chat-types.ts";
+import type {
+	AssistantBlock,
+	Attachment,
+	ChatItem,
+	HostMessage,
+	PendingReview,
+	ToolRun,
+	WebviewMessage,
+} from "../chat-types.ts";
 import { Controls, element } from "./controls.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { renderTokens } from "./tokens.ts";
@@ -193,7 +201,29 @@ function renderBlock(block: AssistantBlock, index: number, tools: Record<string,
 	summary.append(create("span", "tool-name", block.name), create("span", "tool-target", summarizeArgs(block.args)));
 	details.append(summary, create("pre", "args", block.args));
 	if (run?.output) details.append(create("pre", "output", truncate(run.output)));
-	return details;
+	if (!run?.review) return details;
+	// A pending file change: decide right here, under the call that proposed it.
+	const card = create("div", "tool-card");
+	card.append(details, renderReviewPrompt(run.review));
+	return card;
+}
+
+function renderReviewPrompt(review: PendingReview): HTMLElement {
+	const prompt = create("div", "review-prompt");
+	prompt.append(create("span", "review-text", `Apply this ${review.tool} to ${review.label}?`));
+	const actions = create("span", "review-actions");
+	for (const choice of ["Accept", "Reject"] as const) {
+		const button = create("button", choice === "Accept" ? "review-accept" : "review-reject") as HTMLButtonElement;
+		button.type = "button";
+		button.textContent = choice;
+		button.addEventListener("click", () => {
+			for (const other of actions.querySelectorAll("button")) other.disabled = true;
+			vscode.postMessage({ type: "review", id: review.id, choice });
+		});
+		actions.append(button);
+	}
+	prompt.append(actions);
+	return prompt;
 }
 
 function renderAttachment(attachment: Attachment, index: number): HTMLElement {

@@ -12,6 +12,15 @@ export type AssistantBlock =
 export interface ToolRun {
 	status: "running" | "done" | "error";
 	output: string;
+	/** A file change of this call waiting for Accept or Reject. */
+	review?: PendingReview;
+}
+
+export interface PendingReview {
+	id: string;
+	tool: "edit" | "write";
+	/** Workspace-relative path of the file. */
+	label: string;
 }
 
 /** Editor context attached to a message. `content` is exactly what the prompt includes. */
@@ -105,8 +114,11 @@ export interface SessionTab {
 	id: string;
 	title: string;
 	active: boolean;
-	running: boolean;
+	/** Dot color: pulsing while working, green when finished, red when it needs attention or failed. */
+	state: TabState;
 }
+
+export type TabState = "idle" | "running" | "done" | "attention";
 
 /** "ask": every edit and write waits for Accept in the diff editor. "auto": they are applied directly. */
 export type ApprovalMode = "ask" | "auto";
@@ -151,4 +163,5 @@ export type WebviewMessage =
 	| { type: "removeAttachment"; id: string }
 	| { type: "query"; id: number; query: MenuQuery; text?: string }
 	| { type: "command"; command: PanelCommand; arg?: string }
-	| { type: "copyText"; text: string };
+	| { type: "copyText"; text: string }
+	| { type: "review"; id: string; choice: "Accept" | "Reject" };

@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
 import type { RpcExtensionUIRequest } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import { type ChatAction, createChatState, reduceChat } from "./chat-state.ts";
-import type { ChatState, MenuItem, MenuQuery, PanelCommand } from "./chat-types.ts";
+import type { ChatState, MenuItem, MenuQuery, PanelCommand, TabState } from "./chat-types.ts";
 import { createPiClient } from "./pi-launch.ts";
 import { buildPrompt } from "./prompt-context.ts";
 import { commandItems, forkItems, modelItems, sessionItems } from "./quick-picks.ts";
@@ -46,6 +46,10 @@ export class PiSession {
 	state: ChatState = createChatState();
 	info: SessionInfo;
 	status: PiStatus = "stopped";
+	/** How the last run ended; the tab dot turns green or red. */
+	private outcome: "none" | "done" | "failed" = "none";
+	/** A file change of this tab waits for Accept or Reject. */
+	private reviewing = false;
 	private readonly host: PiSessionHost;
 	private client: RpcClient | undefined;
 	private starting: Promise<RpcClient> | undefined;
@@ -70,6 +74,19 @@ export class PiSession {
 	}
 
 	/** Whether the tab holds nothing yet, so opening a saved session can reuse it. */
+	/** Pulsing while pi works, red while a review waits or after a failed or aborted run, green when done. */
+	get tabState(): TabState {
+		if (this.reviewing) return "attention";
+		if (this.status === "working") return "running";
+		if (this.outcome === "failed") return "attention";
+		return this.outcome === "done" ? "done" : "idle";
+	}
+
+	setReviewing(reviewing: boolean): void {
+		this.reviewing = reviewing;
+		this.host.infoChanged(this);
+	}
+
 	get isEmpty(): boolean {
 		return this.status !== "working" && this.state.items.length === 0;
 	}
@@ -87,6 +104,7 @@ export class PiSession {
 		const client = this.client ?? (await this.starting?.catch(() => undefined));
 		this.client = undefined;
 		if (!client) return;
+		if (this.status === "working") this.outcome = "failed";
 		await client.stop();
 		this.host.log(this, "pi stopped");
 		this.info = { ...this.info, started: false };
@@ -96,6 +114,10 @@ export class PiSession {
 	}
 
 	dispatch(action: ChatAction): void {
+		if (action.type === "ui_error") {
+			this.outcome = "failed";
+			this.host.infoChanged(this);
+		}
 		const prev = this.state;
 		this.state = reduceChat(prev, action);
 		if (this.state !== prev) this.host.stateChanged(this, prev);
@@ -268,6 +290,8 @@ export class PiSession {
 			this.dispatch(event);
 			if (event.type === "agent_start") this.setStatus("working");
 			if (event.type === "agent_settled") {
+				const last = this.state.items.at(-1);
+				this.outcome = last?.kind === "error" || (last?.kind === "assistant" && last.error) ? "failed" : "done";
 				this.setStatus("idle");
 				this.host.settled(this);
 				// The session file and title exist once the first message is saved.

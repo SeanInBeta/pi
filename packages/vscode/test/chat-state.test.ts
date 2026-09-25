@@ -142,6 +142,41 @@ describe("chat state", () => {
 		expect(state.sent).toHaveLength(1);
 	});
 
+	it("attaches a pending review to the running call of that file", () => {
+		const running: ChatState = {
+			...createChatState(),
+			items: [
+				{
+					kind: "assistant",
+					streaming: false,
+					blocks: [
+						{ type: "toolCall", id: "t1", name: "write", args: '{"path":"other.txt","content":"x"}' },
+						{ type: "toolCall", id: "t2", name: "write", args: '{"path":"天气.txt","content":"y"}' },
+					],
+					tools: { t1: { status: "running", output: "" }, t2: { status: "running", output: "" } },
+				},
+			],
+		};
+		const review = { id: "review-1", tool: "write" as const, label: "天气.txt" };
+		const reviewed = reduceChat(running, { type: "review_start", review, path: "d:/Dev/playground/天气.txt" });
+		const tools = (state: ChatState) => (state.items[0]?.kind === "assistant" ? state.items[0].tools : {});
+		expect(tools(reviewed).t2?.review).toEqual(review);
+		expect(tools(reviewed).t1?.review).toBeUndefined();
+
+		expect(tools(reduceChat(reviewed, { type: "review_end", id: "review-1" })).t2).toEqual({
+			status: "running",
+			output: "",
+		});
+		const finished = reduceChat(reviewed, {
+			type: "tool_execution_end",
+			toolCallId: "t2",
+			toolName: "write",
+			result: { content: [{ type: "text", text: "ok" }] },
+			isError: false,
+		});
+		expect(tools(finished).t2).toEqual({ status: "done", output: "ok" });
+	});
+
 	it("appends extension errors and skips updates for ignored events", () => {
 		const { state, updates } = replay([
 			{ type: "ui_error", message: "No API key found" },

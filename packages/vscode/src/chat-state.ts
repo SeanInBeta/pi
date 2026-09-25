@@ -5,6 +5,7 @@ import type {
 	ChatItem,
 	ChatState,
 	HostMessage,
+	PendingReview,
 	SentPrompt,
 	ToolRun,
 } from "./chat-types.ts";
@@ -14,7 +15,10 @@ export type ChatAction =
 	| JsonAgentSessionEvent
 	/** An error outside pi's event stream, for example a rejected prompt. */
 	| { type: "ui_error"; message: string }
-	/** Transient status from the extension, for example a pending change review. */
+	/** A file change review started; it attaches to the running edit or write call of that file. */
+	| { type: "review_start"; review: PendingReview; path: string }
+	| { type: "review_end"; id: string }
+	/** Transient status from the extension. */
 	| { type: "ui_status"; status: string | undefined }
 	/** A new pi session started. The transcript clears; the composer draft survives. */
 	| { type: "session_reset" }
@@ -37,6 +41,10 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 	switch (action.type) {
 		case "ui_error":
 			return appendItem(state, { kind: "error", text: action.message });
+		case "review_start":
+			return attachReview(state, action.review, action.path);
+		case "review_end":
+			return mapTools(state, (run) => (run.review?.id === action.id ? { ...run, review: undefined } : run));
 		case "ui_status":
 			return { ...state, status: action.status };
 		case "session_reset":
@@ -165,6 +173,57 @@ function startMessage(state: ChatState, message: AgentMessage): ChatState {
 	}
 	// Tool results arrive through tool_execution_* events; system and custom messages are not shown yet.
 	return state;
+}
+
+/**
+ * Attach a review to the newest running call of the same tool, preferring one whose arguments name
+ * the file (the tool may have been given a relative path).
+ */
+function attachReview(state: ChatState, review: PendingReview, path: string): ChatState {
+	const fileName = path.split(/[\\/]/).pop() ?? path;
+	const quotedName = JSON.stringify(fileName).slice(1, -1);
+	let fallback: { index: number; id: string } | undefined;
+	for (let index = state.items.length - 1; index >= 0; index--) {
+		const item = state.items[index]!;
+		if (item.kind !== "assistant") continue;
+		for (const block of item.blocks) {
+			if (block?.type !== "toolCall" || block.name !== review.tool) continue;
+			if (item.tools[block.id]?.status !== "running") continue;
+			const match = { index, id: block.id };
+			if (block.args.includes(quotedName)) return setReview(state, match, review);
+			fallback ??= match;
+		}
+	}
+	return fallback ? setReview(state, fallback, review) : state;
+}
+
+function setReview(state: ChatState, target: { index: number; id: string }, review: PendingReview): ChatState {
+	const item = state.items[target.index];
+	if (item?.kind !== "assistant") return state;
+	const run = item.tools[target.id];
+	if (!run) return state;
+	const items = state.items.slice();
+	items[target.index] = { ...item, tools: { ...item.tools, [target.id]: { ...run, review } } };
+	return { ...state, items };
+}
+
+/** Apply `update` to every tool run; items whose runs did not change keep their identity. */
+function mapTools(state: ChatState, update: (run: ToolRun) => ToolRun): ChatState {
+	let changed = false;
+	const items = state.items.map((item) => {
+		if (item.kind !== "assistant") return item;
+		let itemChanged = false;
+		const tools: Record<string, ToolRun> = {};
+		for (const [id, run] of Object.entries(item.tools)) {
+			const next = update(run);
+			tools[id] = next;
+			if (next !== run) itemChanged = true;
+		}
+		if (!itemChanged) return item;
+		changed = true;
+		return { ...item, tools };
+	});
+	return changed ? { ...state, items } : state;
 }
 
 /** Mark the last assistant message of the run that just settled. */

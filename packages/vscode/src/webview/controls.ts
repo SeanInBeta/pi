@@ -104,7 +104,11 @@ export class Controls {
 		this.renderTabs();
 		this.approvalLabel.textContent = meta.approvalMode === "auto" ? "Auto edit" : "Ask for approval";
 		const thinking = meta.thinkingLevel && meta.thinkingLevel !== "off" ? ` · ${capitalize(meta.thinkingLevel)}` : "";
-		this.modelLabel.textContent = meta.model ? `${meta.model.id}${thinking}` : meta.started ? "No model" : "Model";
+		this.modelLabel.textContent = meta.model
+			? `${meta.model.id}${thinking}`
+			: meta.started
+				? "No model"
+				: "Loading model...";
 		if (!this.effort.hidden) this.renderEffort();
 	}
 
@@ -112,7 +116,7 @@ export class Controls {
 	private renderTabs(): void {
 		this.tabs.replaceChildren(
 			...this.meta.tabs.map((tab) => {
-				const wrapper = create("div", `tab${tab.active ? " active" : ""}${tab.running ? " running" : ""}`);
+				const wrapper = create("div", `tab state-${tab.state}${tab.active ? " active" : ""}`);
 				wrapper.setAttribute("role", "tab");
 				wrapper.setAttribute("aria-selected", String(tab.active));
 				const main = create("button", "tab-main") as HTMLButtonElement;
@@ -127,7 +131,9 @@ export class Controls {
 				}
 				const close = create("button", "tab-close") as HTMLButtonElement;
 				close.type = "button";
-				close.title = tab.running ? "Stop and close this tab" : "Close this tab";
+				close.title = tab.state === "running" ? "Stop and close this tab" : "Close this tab";
+				// The last tab stays: there is always a chat to type into.
+				close.hidden = this.meta.tabs.length === 1;
 				close.append(trashIcon());
 				close.addEventListener("click", () => this.command("closeTab", tab.id));
 				wrapper.append(main, close);
@@ -295,10 +301,6 @@ export class Controls {
 			this.closeEffort();
 			this.openModels(true);
 		});
-		element("effort-reset").addEventListener("click", () => {
-			const level = this.meta.defaultThinkingLevel;
-			if (level && level !== this.meta.thinkingLevel) this.command("setThinking", level);
-		});
 		// Preview while dragging, apply on release or keyboard change.
 		this.effortRange.addEventListener("input", () => this.renderEffort(Number(this.effortRange.value)));
 		this.effortRange.addEventListener("change", () => {
@@ -456,7 +458,15 @@ export class Controls {
 			{ label: "New session", description: "Open a new tab", value: "action:new" },
 			{ label: "Rename session...", value: "action:rename" },
 			{ label: "Fork from an earlier message...", value: "action:fork" },
-			{ label: "Close tab", description: "Stop this tab's pi; the session stays saved", value: "action:close" },
+			...(this.meta.tabs.length > 1
+				? [
+						{
+							label: "Close tab",
+							description: "Stop this tab's pi; the session stays saved",
+							value: "action:close",
+						},
+					]
+				: []),
 			{
 				label: "Delete session...",
 				description: "Close the tab and move the session file to the trash",
@@ -543,8 +553,6 @@ export class Controls {
 		element("effort-model").textContent = this.meta.model
 			? `${this.meta.model.id} · ${this.meta.model.provider}`
 			: "No model selected";
-		const reset = element<HTMLButtonElement>("effort-reset");
-		reset.disabled = !this.meta.defaultThinkingLevel || this.meta.defaultThinkingLevel === this.meta.thinkingLevel;
 		const slidable = levels.length > 1;
 		element("effort-slider").hidden = !slidable;
 		element("effort-none").hidden = slidable;

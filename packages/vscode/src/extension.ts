@@ -56,6 +56,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 			command: (command, arg) => this.run(() => this.command(command, arg)),
 			// The shown tab starts with the panel, so a restored session loads its history right away.
 			ready: () => this.run(() => this.active.start()),
+			review: (id, choice) => this.ui.resolveReview(choice, id),
 		});
 		this.ui = new ExtensionUIBridge({
 			log: (line) => this.output.appendLine(line),
@@ -330,7 +331,14 @@ class PiController implements vscode.Disposable, PiSessionHost {
 			label: () => session.title,
 			respond: (response) => session.respondToUI(response),
 			setInput: (text) => this.setInput(session, text),
-			setStatus: (status) => session.dispatch({ type: "ui_status", status }),
+			startReview: (review, path) => {
+				session.dispatch({ type: "review_start", review, path });
+				session.setReviewing(true);
+			},
+			endReview: (id) => {
+				session.dispatch({ type: "review_end", id });
+				session.setReviewing(false);
+			},
 		};
 	}
 
@@ -358,7 +366,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				id: session.id,
 				title: session.title,
 				active: session === this.active,
-				running: session.status === "working" || session.status === "starting",
+				state: session.tabState,
 			})),
 		};
 		const serialized = JSON.stringify(meta);
