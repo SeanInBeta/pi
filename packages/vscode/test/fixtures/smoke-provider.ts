@@ -39,13 +39,22 @@ const respond: FauxResponseFactory = (context) => {
 	const content = last?.role === "user" ? last.content : "";
 	const text =
 		typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
-	// "smoke:write [path]" and "smoke:edit" exercise the file tools, for example the VS Code change review.
+	// "smoke:write [path]", "smoke:edit" and "smoke:rm <path>" exercise the file tools, for example the VS Code change review.
 	const write = /smoke:write(?:\s+(\S+))?/.exec(text);
 	if (write) {
 		const path = write[1] ?? "pi-smoke.txt";
 		return fauxAssistantMessage(
 			[fauxText(`Writing ${path}.`), fauxToolCall("write", { path, content: "Hello from pi\n" })],
 			{ stopReason: "toolUse" },
+		);
+	}
+	const remove = /smoke:rm\s+(\S+)/.exec(text);
+	if (remove) {
+		return fauxAssistantMessage(
+			[fauxText(`Deleting ${remove[1]}.`), fauxToolCall("bash", { command: `rm ${remove[1]}` })],
+			{
+				stopReason: "toolUse",
+			},
 		);
 	}
 	if (text.includes("smoke:edit")) {

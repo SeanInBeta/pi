@@ -16,7 +16,7 @@ export type ChatAction =
 	/** An error outside pi's event stream, for example a rejected prompt. */
 	| { type: "ui_error"; message: string }
 	/** A file change review started; it attaches to the running edit or write call of that file. */
-	| { type: "review_start"; review: PendingReview; path: string }
+	| { type: "review_start"; review: PendingReview; path?: string; toolCallId?: string }
 	| { type: "review_end"; id: string }
 	/** Transient status from the extension. */
 	| { type: "ui_status"; status: string | undefined }
@@ -42,7 +42,7 @@ export function reduceChat(state: ChatState, action: ChatAction): ChatState {
 		case "ui_error":
 			return appendItem(state, { kind: "error", text: action.message });
 		case "review_start":
-			return attachReview(state, action.review, action.path);
+			return attachReview(state, action.review, action.path, action.toolCallId);
 		case "review_end":
 			return mapTools(state, (run) => (run.review?.id === action.id ? { ...run, review: undefined } : run));
 		case "ui_status":
@@ -179,7 +179,20 @@ function startMessage(state: ChatState, message: AgentMessage): ChatState {
  * Attach a review to the newest running call of the same tool, preferring one whose arguments name
  * the file (the tool may have been given a relative path).
  */
-function attachReview(state: ChatState, review: PendingReview, path: string): ChatState {
+function attachReview(state: ChatState, review: PendingReview, path?: string, toolCallId?: string): ChatState {
+	if (toolCallId) {
+		let index = state.items.length - 1;
+		for (; index >= 0; index--) {
+			const item = state.items[index]!;
+			if (
+				item.kind === "assistant" &&
+				item.blocks.some((block) => block?.type === "toolCall" && block.id === toolCallId)
+			)
+				break;
+		}
+		if (index !== -1) return setReview(state, { index, id: toolCallId }, review);
+	}
+	if (!path) return state;
 	const fileName = path.split(/[\\/]/).pop() ?? path;
 	const quotedName = JSON.stringify(fileName).slice(1, -1);
 	let fallback: { index: number; id: string } | undefined;
@@ -200,8 +213,8 @@ function attachReview(state: ChatState, review: PendingReview, path: string): Ch
 function setReview(state: ChatState, target: { index: number; id: string }, review: PendingReview): ChatState {
 	const item = state.items[target.index];
 	if (item?.kind !== "assistant") return state;
-	const run = item.tools[target.id];
-	if (!run) return state;
+	// A command is reviewed before it starts, so its run may not exist yet.
+	const run = item.tools[target.id] ?? { status: "running" as const, output: "" };
 	const items = state.items.slice();
 	items[target.index] = { ...item, tools: { ...item.tools, [target.id]: { ...run, review } } };
 	return { ...state, items };

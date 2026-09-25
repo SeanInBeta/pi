@@ -17,7 +17,14 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 
 ## Reviewing file changes
 
-The approval mode, switchable in the composer or with the `pi.approvalMode` setting, decides what happens to pi's `edit` and `write` calls. With "Ask for approval" (default) every change waits for your decision before the file changes; with "Auto edit" it is applied directly.
+The approval mode, switchable in the composer or with the `pi.approvalMode` setting, decides what happens when pi changes files. With "Ask for approval" (default) every change waits for your decision before any file is touched; with "Auto edit" it is applied directly. Reviews cover:
+
+- `edit` and `write` calls, shown as a diff (steps below);
+- `bash` and `powershell` commands that may delete, move or modify files, shown in the chat under the command ("Run this command? It deletes files (rm).") without a diff. A rejected command is not run, and the model is told why.
+
+A command counts as file-changing when it uses a delete, move or write command (`rm`, `del`, `Remove-Item`, `mv`, `Rename-Item`, `cp`, `mkdir`, `touch`, `chmod`, `tee`, `Set-Content`, ...), an output redirect (`> file`, `>> file`; not `2>&1` or `> /dev/null`), `sed -i`/`perl -i`, `find -delete`/`-exec`, a git command that changes the working tree (`checkout`, `restore`, `reset`, `clean`, `stash`, `pull`, `merge`, ...), or a package install (`npm install`, `pip install`, ...). This is a check of the command text: it cannot see what a script or program such as `python script.py` does internally. The rules and their tests are in `src/command-review.ts` and `test/command-review.test.ts`.
+
+For `edit` and `write`:
 
 1. The diff editor opens with the file on disk on the left and pi's exact new content on the right (an empty left side for a new file).
 2. Accept or Reject with the buttons shown in the chat right under the `edit`/`write` call, the check and close buttons in the diff editor title bar, or `Pi: Accept Proposed Change` / `Pi: Reject Proposed Change`.
@@ -25,7 +32,7 @@ The approval mode, switchable in the composer or with the `pi.approvalMode` sett
 
 Closing the diff tab does not decide; the review stays pending until Accept, Reject or Abort. Reviews are shown one at a time.
 
-How it works: the extension always starts pi with `--extension src/pi-extension/review-changes.ts`. That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`. The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
+How it works: the extension always starts pi with `--extension src/pi-extension/review-changes.ts`. That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`, and handles pi's `tool_call` event to review file-changing `bash` and `powershell` commands before they run (a rejected call is blocked). The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
 
 ## Extension dialogs
 
@@ -102,6 +109,7 @@ Code layout:
 | `src/quick-picks.ts` | QuickPick items for sessions, models, forks and thinking levels (pure, tested) |
 | `src/extension-ui.ts` | Native VS Code UI for pi extension UI requests, including the diff review |
 | `src/file-change.ts` | Review metadata shared by both sides |
+| `src/command-review.ts` | Decides which shell commands may change files (pure, tested) |
 | `src/pi-extension/review-changes.ts` | pi extension (runs inside pi) that routes edit and write through a review |
 | `src/webview/main.ts` | Webview renderer (plain DOM, no framework), typechecked by `tsconfig.webview.json` |
 | `src/webview/markdown.ts` | Markdown to DOM using only `marked`'s lexer; nodes are built with `textContent`, never `innerHTML` |
@@ -138,7 +146,7 @@ To try the extension without an API key, point pi at the scripted provider in `t
 "pi.args": ["--extension", "<repo>/packages/vscode/test/fixtures/smoke-provider.ts", "--provider", "smoke", "--model", "faux-1"]
 ```
 
-`smoke:edit` makes it edit `sample.ts` (replacing `return a + b;`), `smoke:write [path]` makes it write a file, and `/smoke-ui` runs confirm, select and input dialogs. Other messages get thinking, a reply that lists the attached context blocks, and a `bash ls` tool call, followed by a Markdown summary. The provider has two models: `faux-1` (reasoning) and `faux-2`.
+`smoke:edit` makes it edit `sample.ts` (replacing `return a + b;`), `smoke:write [path]` makes it write a file, `smoke:rm <path>` makes it run `rm <path>`, and `/smoke-ui` runs confirm, select and input dialogs. Other messages get thinking, a reply that lists the attached context blocks, and a `bash ls` tool call, followed by a Markdown summary. The provider has two models: `faux-1` (reasoning) and `faux-2`.
 
 Run the tests (source launcher, sessions against local pi, prompt formatting, quick picks, and chat reducer against the faux provider):
 

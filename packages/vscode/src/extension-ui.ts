@@ -2,7 +2,14 @@ import { basename } from "node:path";
 import * as vscode from "vscode";
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import type { PendingReview } from "./chat-types.ts";
-import { ACCEPT, type FileChangeMetadata, isFileChangeMetadata, type REJECT } from "./file-change.ts";
+import {
+	ACCEPT,
+	type CommandReviewMetadata,
+	type FileChangeMetadata,
+	isCommandReviewMetadata,
+	isFileChangeMetadata,
+	type REJECT,
+} from "./file-change.ts";
 
 const PROPOSED_SCHEME = "pi-proposed";
 const REVIEW_CONTEXT = "pi.reviewPending";
@@ -18,7 +25,7 @@ export interface UITarget {
 	/** Put text in the chat composer. */
 	setInput(text: string): void;
 	/** Show a pending review's Accept and Reject buttons in the chat, under the tool call. */
-	startReview(review: PendingReview, path: string): void;
+	startReview(review: PendingReview, location: { path?: string; toolCallId?: string }): void;
 	endReview(id: string): void;
 }
 
@@ -59,10 +66,14 @@ export class ExtensionUIBridge implements vscode.Disposable {
 			case "confirm":
 			case "input":
 			case "editor":
-				if (request.method === "select" && isFileChangeMetadata(request.metadata) && this.host.autoApprove()) {
-					this.host.log(`auto edit: accepted ${request.metadata.tool} of ${request.metadata.path}`);
-					target.respond({ type: "extension_ui_response", id: request.id, value: ACCEPT });
-					return;
+				if (request.method === "select" && this.host.autoApprove()) {
+					const metadata = request.metadata;
+					if (isFileChangeMetadata(metadata) || isCommandReviewMetadata(metadata)) {
+						const subject = isFileChangeMetadata(metadata) ? metadata.path : metadata.command;
+						this.host.log(`auto edit: accepted ${metadata.tool}: ${subject}`);
+						target.respond({ type: "extension_ui_response", id: request.id, value: ACCEPT });
+						return;
+					}
 				}
 				this.queue = this.queue.then(() => this.runDialog(request, target));
 				return;
@@ -143,11 +154,13 @@ export class ExtensionUIBridge implements vscode.Disposable {
 			case "select": {
 				const value = isFileChangeMetadata(request.metadata)
 					? await this.reviewChange(request.metadata, target, token)
-					: await vscode.window.showQuickPick(
-							request.options,
-							{ title: request.title, ignoreFocusOut: true },
-							token,
-						);
+					: isCommandReviewMetadata(request.metadata)
+						? await this.reviewCommand(request.metadata, target, token)
+						: await vscode.window.showQuickPick(
+								request.options,
+								{ title: request.title, ignoreFocusOut: true },
+								token,
+							);
 				return value === undefined ? { cancelled: true } : { value };
 			}
 			case "confirm": {
@@ -195,7 +208,7 @@ export class ExtensionUIBridge implements vscode.Disposable {
 		const review: PendingReview = { id: `review-${id}`, tool: change.tool, label };
 		this.reviewId = review.id;
 		try {
-			target.startReview(review, change.path);
+			target.startReview(review, { path: change.path, toolCallId: change.toolCallId });
 			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, true);
 			await vscode.commands.executeCommand(
 				"vscode.diff",
@@ -212,6 +225,30 @@ export class ExtensionUIBridge implements vscode.Disposable {
 			target.endReview(review.id);
 			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, false);
 			await closeDiff(proposed);
+		}
+	}
+
+	/** A file-changing shell command: Accept or Reject in the chat, under the command. */
+	private async reviewCommand(
+		command: CommandReviewMetadata,
+		target: UITarget,
+		token: vscode.CancellationToken,
+	): Promise<string | undefined> {
+		const review: PendingReview = { id: `review-${++this.nextId}`, tool: command.tool, label: command.reason };
+		const decision = new Promise<string | undefined>((resolve) => {
+			this.decide = resolve;
+			token.onCancellationRequested(() => resolve(undefined));
+		});
+		this.reviewId = review.id;
+		try {
+			target.startReview(review, { toolCallId: command.toolCallId });
+			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, true);
+			return await decision;
+		} finally {
+			this.decide = undefined;
+			this.reviewId = undefined;
+			target.endReview(review.id);
+			await vscode.commands.executeCommand("setContext", REVIEW_CONTEXT, false);
 		}
 	}
 

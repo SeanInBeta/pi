@@ -18,8 +18,8 @@ export interface ToolRun {
 
 export interface PendingReview {
 	id: string;
-	tool: "edit" | "write";
-	/** Workspace-relative path of the file. */
+	tool: "edit" | "write" | "bash" | "powershell";
+	/** Workspace-relative path of the file, or for a command why it needs review ("deletes files (rm)"). */
 	label: string;
 }
 

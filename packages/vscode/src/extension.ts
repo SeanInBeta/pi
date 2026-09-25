@@ -331,8 +331,8 @@ class PiController implements vscode.Disposable, PiSessionHost {
 			label: () => session.title,
 			respond: (response) => session.respondToUI(response),
 			setInput: (text) => this.setInput(session, text),
-			startReview: (review, path) => {
-				session.dispatch({ type: "review_start", review, path });
+			startReview: (review, location) => {
+				session.dispatch({ type: "review_start", review, ...location });
 				session.setReviewing(true);
 			},
 			endReview: (id) => {

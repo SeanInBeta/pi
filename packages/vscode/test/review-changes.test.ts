@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RpcClient } from "../../coding-agent/src/modes/rpc/rpc-client.ts";
 import type { RpcExtensionUIRequest } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
-import { ACCEPT, isFileChangeMetadata, REJECT } from "../src/file-change.ts";
+import { ACCEPT, isCommandReviewMetadata, isFileChangeMetadata, REJECT } from "../src/file-change.ts";
 import { createPiClient } from "../src/pi-launch.ts";
 
 const extensionPath = fileURLToPath(new URL("..", import.meta.url));
@@ -61,6 +61,7 @@ describe("review-changes pi extension", () => {
 		const metadata = request?.method === "select" ? request.metadata : undefined;
 		expect(isFileChangeMetadata(metadata)).toBe(true);
 		expect(metadata).toMatchObject({
+			toolCallId: expect.any(String),
 			tool: "edit",
 			path: join(cwd!, "sample.ts"),
 			content: "export function add(a: number, b: number) {\n\treturn a + b; // reviewed\n}\n",
@@ -77,6 +78,31 @@ describe("review-changes pi extension", () => {
 		const end = events.find((event) => event.type === "tool_execution_end");
 		expect(end).toMatchObject({ isError: true });
 		expect(JSON.stringify(end)).toContain("The user rejected this change");
+	}, 60_000);
+
+	it("reviews a command that deletes a file and blocks it after Reject", async () => {
+		const requests = await start(REJECT);
+		const events = await client!.promptAndWait("smoke:rm sample.ts", undefined, 30_000);
+
+		expect(existsSync(join(cwd!, "sample.ts"))).toBe(true);
+		const request = requests[0];
+		const metadata = request?.method === "select" ? request.metadata : undefined;
+		expect(isCommandReviewMetadata(metadata)).toBe(true);
+		expect(metadata).toMatchObject({ tool: "bash", command: "rm sample.ts", reason: "deletes files (rm)" });
+		const end = events.find((event) => event.type === "tool_execution_end");
+		expect(end).toMatchObject({ isError: true });
+		expect(JSON.stringify(end)).toContain("The user rejected this command");
+	}, 60_000);
+
+	it("runs an accepted file-deleting command and leaves read-only commands unreviewed", async () => {
+		const requests = await start(ACCEPT);
+		await client!.promptAndWait("smoke:rm sample.ts", undefined, 30_000);
+		expect(existsSync(join(cwd!, "sample.ts"))).toBe(false);
+		expect(requests).toHaveLength(1);
+
+		// The default reply runs `ls`, which needs no review.
+		await client!.promptAndWait("hello", undefined, 30_000);
+		expect(requests).toHaveLength(1);
 	}, 60_000);
 
 	it("does not create directories for a rejected write", async () => {

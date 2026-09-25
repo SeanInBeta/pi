@@ -210,7 +210,11 @@ function renderBlock(block: AssistantBlock, index: number, tools: Record<string,
 
 function renderReviewPrompt(review: PendingReview): HTMLElement {
 	const prompt = create("div", "review-prompt");
-	prompt.append(create("span", "review-text", `Apply this ${review.tool} to ${review.label}?`));
+	const question =
+		review.tool === "edit" || review.tool === "write"
+			? `Apply this ${review.tool} to ${review.label}?`
+			: `Run this command? It ${review.label}.`;
+	prompt.append(create("span", "review-text", question));
 	const actions = create("span", "review-actions");
 	for (const choice of ["Accept", "Reject"] as const) {
 		const button = create("button", choice === "Accept" ? "review-accept" : "review-reject") as HTMLButtonElement;
