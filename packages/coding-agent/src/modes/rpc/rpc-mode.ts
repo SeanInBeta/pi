@@ -12,6 +12,7 @@
  */
 
 import * as crypto from "node:crypto";
+import type { AuthPrompt, KnownProvider } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
 	ExtensionUIContext,
@@ -19,6 +20,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { defaultModelPerProvider } from "../../core/model-resolver.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -31,9 +33,12 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
+	RpcAuthEvent,
+	RpcAuthProvider,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcLoginResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
@@ -41,9 +46,12 @@ import type {
 
 // Re-export types for consumers
 export type {
+	RpcAuthEvent,
+	RpcAuthProvider,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcLoginResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSessionSummary,
@@ -83,6 +91,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		string,
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
+
+	// Aborts the running `login`, if any
+	let loginController: AbortController | undefined;
 
 	// Shutdown request flag
 	let shutdownRequested = false;
@@ -390,6 +401,50 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 	};
 
+	/**
+	 * Ask the client for a login prompt through the extension UI protocol: `select` for choices, `input` for
+	 * text. The metadata marks the dialog as an auth prompt so clients can mask secrets.
+	 */
+	const promptForAuth = async (provider: string, prompt: AuthPrompt): Promise<string> => {
+		const metadata = { kind: "pi.auth", provider, promptType: prompt.type };
+		const opts = { signal: prompt.signal };
+		if (prompt.type === "select") {
+			const labels = prompt.options.map((option) => option.label);
+			const label = await createDialogPromise<string | undefined>(
+				opts,
+				undefined,
+				{ method: "select", title: prompt.message, options: labels, metadata },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
+			);
+			const id = prompt.options.find((option) => option.label === label)?.id;
+			if (id === undefined) throw new Error("Login cancelled");
+			return id;
+		}
+		const value = await createDialogPromise<string | undefined>(
+			opts,
+			undefined,
+			{ method: "input", title: prompt.message, placeholder: prompt.placeholder, metadata },
+			(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
+		);
+		if (value === undefined) throw new Error("Login cancelled");
+		return value;
+	};
+
+	/** After login, refresh the provider's catalog and select its default model when no real model is set. */
+	const selectModelAfterLogin = async (provider: string): Promise<RpcLoginResult> => {
+		const runtime = session.modelRuntime;
+		await runtime.refresh({ providers: [provider], signal: AbortSignal.timeout(15_000) }).catch(() => undefined);
+		const current = session.model;
+		if (current && current.provider !== "unknown") return { model: current };
+		const models = await runtime.getAvailable(provider);
+		const defaultId = defaultModelPerProvider[provider as KnownProvider];
+		const model = models.find((candidate) => candidate.id === defaultId) ?? models[0];
+		const name = runtime.getProvider(provider)?.name ?? provider;
+		if (!model) return { warning: `Signed in to ${name}, but it has no available models.` };
+		await session.setModel(model, { persist: true });
+		return { model };
+	};
+
 	await rebindSession();
 	registerSignalHandlers();
 
@@ -629,6 +684,55 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 						firstMessage: info.firstMessage,
 					})),
 				});
+			}
+
+			// =================================================================
+			// Auth
+			// =================================================================
+
+			case "get_auth_providers": {
+				const runtime = session.modelRuntime;
+				const providers: RpcAuthProvider[] = runtime.getProviders().map((provider) => {
+					const status = runtime.getProviderAuthStatus(provider.id);
+					const oauth = provider.auth.oauth;
+					return {
+						id: provider.id,
+						name: provider.name,
+						oauth: oauth ? { label: oauth.loginLabel ?? `Sign in to ${provider.name}` } : undefined,
+						apiKey: !!provider.auth.apiKey?.login,
+						configured: status.configured,
+						source: status.configured ? (status.label ?? status.source) : undefined,
+					};
+				});
+				providers.sort((a, b) => a.name.localeCompare(b.name));
+				return success(id, "get_auth_providers", { providers });
+			}
+
+			case "login": {
+				if (loginController) return error(id, "login", "A login is already in progress");
+				const controller = new AbortController();
+				loginController = controller;
+				try {
+					await session.modelRuntime.login(command.provider, command.method, {
+						signal: controller.signal,
+						prompt: (prompt) => promptForAuth(command.provider, prompt),
+						notify: (event) =>
+							output({ type: "auth_event", provider: command.provider, event } satisfies RpcAuthEvent),
+					});
+				} finally {
+					if (loginController === controller) loginController = undefined;
+				}
+				return success(id, "login", await selectModelAfterLogin(command.provider));
+			}
+
+			case "abort_login": {
+				loginController?.abort();
+				return success(id, "abort_login");
+			}
+
+			case "logout": {
+				await session.modelRuntime.logout(command.provider);
+				return success(id, "logout");
 			}
 
 			case "switch_session": {

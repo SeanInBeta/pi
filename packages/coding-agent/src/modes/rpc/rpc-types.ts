@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { AuthEvent, ImageContent, Model } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
@@ -59,6 +59,12 @@ export type RpcCommand =
 	| { id?: string; type: "get_session_stats" }
 	| { id?: string; type: "export_html"; outputPath?: string }
 	| { id?: string; type: "list_sessions" }
+
+	// Auth
+	| { id?: string; type: "get_auth_providers" }
+	| { id?: string; type: "login"; provider: string; method: "oauth" | "api_key" }
+	| { id?: string; type: "abort_login" }
+	| { id?: string; type: "logout"; provider: string }
 	| { id?: string; type: "switch_session"; sessionPath: string }
 	| { id?: string; type: "fork"; entryId: string }
 	| { id?: string; type: "clone" }
@@ -77,6 +83,35 @@ export type RpcCommand =
 // ============================================================================
 // RPC Slash Command (for get_commands response)
 // ============================================================================
+
+/** A model provider and how it can be authenticated, as returned by `get_auth_providers`. */
+export interface RpcAuthProvider {
+	id: string;
+	name: string;
+	/** Present when the provider supports signing in with an account (OAuth). */
+	oauth?: { label: string };
+	/** Whether an API key can be entered with `login` and method `api_key`. */
+	apiKey: boolean;
+	/** Whether credentials are available (stored, environment, or configuration). */
+	configured: boolean;
+	/** Where the credentials come from, e.g. "stored" or an environment variable name. */
+	source?: string;
+}
+
+/** Result of a successful `login`. */
+export interface RpcLoginResult {
+	/** The current model after login; set when login selected the provider's default model. */
+	model?: Model<any>;
+	/** Set when login succeeded but no model could be selected. */
+	warning?: string;
+}
+
+/** Progress of a running `login`, emitted on stdout while the flow waits for the user. */
+export interface RpcAuthEvent {
+	type: "auth_event";
+	provider: string;
+	event: AuthEvent;
+}
 
 /** A saved session in the current session directory, as returned by `list_sessions`. */
 export interface RpcSessionSummary {
@@ -217,6 +252,18 @@ export type RpcResponse =
 			success: true;
 			data: { sessions: RpcSessionSummary[] };
 	  }
+
+	// Auth
+	| {
+			id?: string;
+			type: "response";
+			command: "get_auth_providers";
+			success: true;
+			data: { providers: RpcAuthProvider[] };
+	  }
+	| { id?: string; type: "response"; command: "login"; success: true; data: RpcLoginResult }
+	| { id?: string; type: "response"; command: "abort_login"; success: true }
+	| { id?: string; type: "response"; command: "logout"; success: true }
 	| {
 			id?: string;
 			type: "response";

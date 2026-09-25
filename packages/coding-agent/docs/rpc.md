@@ -168,6 +168,10 @@ The detailed references formerly on this page now have dedicated pages. These an
 <a id="get_session_stats"></a>
 <a id="export_html"></a>
 <a id="list_sessions"></a>
+<a id="get_auth_providers"></a>
+<a id="login"></a>
+<a id="abort_login"></a>
+<a id="logout"></a>
 <a id="switch_session"></a>
 <a id="fork"></a>
 <a id="clone"></a>

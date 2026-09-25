@@ -263,6 +263,69 @@ Response contains an array of full [Model](#model-object) objects:
 }
 ```
 
+## Auth
+
+### get_auth_providers
+
+List model providers, how each can be authenticated, and whether credentials are configured. `oauth` is present when the provider supports signing in with an account; `apiKey` is true when an API key can be entered with `login`. `source` says where configured credentials come from.
+
+```json
+{"type": "get_auth_providers"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_auth_providers",
+  "success": true,
+  "data": {
+    "providers": [
+      {"id": "anthropic", "name": "Anthropic", "oauth": {"label": "Sign in to Anthropic"}, "apiKey": true, "configured": false},
+      {"id": "openai", "name": "OpenAI", "apiKey": true, "configured": true, "source": "OPENAI_API_KEY"}
+    ]
+  }
+}
+```
+
+### login
+
+Sign in to a provider with an account (`"method": "oauth"`) or an API key (`"method": "api_key"`), like the interactive `/login`. Credentials are saved to `auth.json` in the agent directory.
+
+```json
+{"type": "login", "provider": "openai", "method": "api_key"}
+```
+
+While the flow runs, pi asks for input with [extension UI requests](rpc-extension-ui.md): `select` for choices and `input` for text such as an API key or a pasted code. These requests carry `"metadata": {"kind": "pi.auth", "provider": "openai", "promptType": "secret"}`; `promptType` is `text`, `secret`, `select` or `manual_code`, so clients can mask secrets. Cancelling a request cancels the login. Progress is emitted as `auth_event` lines, where `event` is `info`, `auth_url` (open `url` in a browser), `device_code` (show `userCode` and `verificationUri`) or `progress`:
+
+```json
+{"type": "auth_event", "provider": "anthropic", "event": {"type": "auth_url", "url": "https://...", "instructions": "..."}}
+```
+
+After a successful login pi refreshes the provider's model catalog. When no model was selected yet, it selects the provider's default model (or its first available model) and saves it as the default. The response carries the current model, or a `warning` when no model could be selected:
+
+```json
+{"type": "response", "command": "login", "success": true, "data": {"model": {...}}}
+```
+
+The response arrives only when the user finishes, so clients should not apply their normal request timeout. Only one login runs at a time.
+
+### abort_login
+
+Cancel the running login. The `login` command then fails.
+
+```json
+{"type": "abort_login"}
+```
+
+### logout
+
+Remove stored credentials for a provider. Credentials from environment variables are not affected.
+
+```json
+{"type": "logout", "provider": "openai"}
+```
+
 ## Thinking
 
 ### set_thinking_level

@@ -7,6 +7,7 @@ export type { JsonAgentSessionEvent } from "./json-event.ts";
 export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
 export {
 	type ModelInfo,
+	type RpcAuthEventListener,
 	RpcClient,
 	type RpcClientOptions,
 	type RpcEventListener,
@@ -14,9 +15,12 @@ export {
 } from "./rpc/rpc-client.ts";
 export { runRpcMode } from "./rpc/rpc-mode.ts";
 export type {
+	RpcAuthEvent,
+	RpcAuthProvider,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcLoginResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSessionSummary,

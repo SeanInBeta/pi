@@ -14,9 +14,12 @@ import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.t
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
+	RpcAuthEvent,
+	RpcAuthProvider,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcLoginResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSessionSummary,
@@ -58,6 +61,7 @@ export interface ModelInfo {
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
+export type RpcAuthEventListener = (event: RpcAuthEvent) => void;
 export type RpcExtensionUIListener = (request: RpcExtensionUIRequest) => void;
 
 // ============================================================================
@@ -69,6 +73,7 @@ export class RpcClient {
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
 	private extensionUIListeners: RpcExtensionUIListener[] = [];
+	private authEventListeners: RpcAuthEventListener[] = [];
 	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
 		new Map();
 	private requestId = 0;
@@ -201,6 +206,19 @@ export class RpcClient {
 			const index = this.extensionUIListeners.indexOf(listener);
 			if (index !== -1) {
 				this.extensionUIListeners.splice(index, 1);
+			}
+		};
+	}
+
+	/**
+	 * Subscribe to progress of a running login (browser URLs, device codes, status messages).
+	 */
+	onAuthEvent(listener: RpcAuthEventListener): () => void {
+		this.authEventListeners.push(listener);
+		return () => {
+			const index = this.authEventListeners.indexOf(listener);
+			if (index !== -1) {
+				this.authEventListeners.splice(index, 1);
 			}
 		};
 	}
@@ -417,6 +435,40 @@ export class RpcClient {
 	}
 
 	/**
+	 * List model providers with their login methods and whether credentials are configured.
+	 */
+	async getAuthProviders(): Promise<RpcAuthProvider[]> {
+		const response = await this.send({ type: "get_auth_providers" });
+		return this.getData<{ providers: RpcAuthProvider[] }>(response).providers;
+	}
+
+	/**
+	 * Sign in to a provider with an account (OAuth) or an API key. Prompts arrive as extension UI requests
+	 * (`select`/`input` with `metadata.kind === "pi.auth"`) and progress as auth events. Waits up to
+	 * `timeout` ms (default 15 minutes) for the user to finish.
+	 */
+	async login(provider: string, method: "oauth" | "api_key", timeout = 15 * 60_000): Promise<RpcLoginResult> {
+		const response = await this.send({ type: "login", provider, method }, timeout);
+		return this.getData(response);
+	}
+
+	/**
+	 * Cancel a running login.
+	 */
+	async abortLogin(): Promise<void> {
+		const response = await this.send({ type: "abort_login" });
+		this.getData<void>(response);
+	}
+
+	/**
+	 * Remove stored credentials for a provider.
+	 */
+	async logout(provider: string): Promise<void> {
+		const response = await this.send({ type: "logout", provider });
+		this.getData<void>(response);
+	}
+
+	/**
 	 * Switch to a different session file.
 	 * @returns Object with `cancelled: true` if an extension cancelled the switch
 	 */
@@ -570,6 +622,13 @@ export class RpcClient {
 				return;
 			}
 
+			if (data.type === "auth_event") {
+				for (const listener of this.authEventListeners) {
+					listener(data as RpcAuthEvent);
+				}
+				return;
+			}
+
 			if (data.type === "extension_ui_request") {
 				for (const listener of this.extensionUIListeners) {
 					listener(data as RpcExtensionUIRequest);
@@ -597,7 +656,7 @@ export class RpcClient {
 		this.pendingRequests.clear();
 	}
 
-	private async send(command: RpcCommandBody): Promise<RpcResponse> {
+	private async send(command: RpcCommandBody, timeoutMs = 30000): Promise<RpcResponse> {
 		const childProcess = this.process;
 		const stdin = childProcess?.stdin;
 		if (!childProcess || !stdin) {
@@ -624,7 +683,7 @@ export class RpcClient {
 			const timeout = setTimeout(() => {
 				this.pendingRequests.delete(id);
 				reject(new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`));
-			}, 30000);
+			}, timeoutMs);
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {
