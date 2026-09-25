@@ -1,215 +1,112 @@
-# pi-vscode-plugin
+# Pi for VS Code
 
-Experimental VS Code extension for pi. Not yet published; install the packaged VSIX (see [Packaging](#packaging)).
+A chat panel for the [pi coding agent](https://github.com/earendil-works/pi) inside VS Code. Ask pi to explain, write or change code in your project, attach editor context, and review every file change before it is applied.
 
-Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace folder and shows a chat panel in the Pi activity bar view. The raw event stream is also written to the `Pi` output channel.
+pi is included in the extension: you do not need to install pi separately.
 
-## Chat panel
+## Features
 
-- Tabs work like terminals: every tab runs its own pi process, so tabs work at the same time. A tab's dot pulses while pi works, turns green when the run finished, and red when it needs you (a pending Accept/Reject) or the run was aborted or failed. `+` opens a tab and the trash icon stops and closes one; the last tab cannot be closed. Clicking the active tab, or right-clicking any tab, opens the session menu: New session, Rename, Fork, Close tab, Delete session (moves the session file to the trash after confirmation; where the file system has no trash, a second confirmation deletes it permanently), and recent sessions (opened in a tab, or in an empty current tab). When the tabs overflow, a small navigation bar under them scrolls the strip (drag it, click it, or use the mouse wheel over the tabs). Open tabs and their sessions are restored when the window reloads. Session and model choices open inside the panel, not in VS Code's quick pick.
-- The composer has a `+` menu (attach selection, current file, problems, mention a file), the approval mode, a model chip (model and thinking level), and a round send button. The model chip reads "Loading model..." until pi reports its model, then the model and thinking level. It opens a compact Codex-style popover: the thinking level on a slider with the model name below it; the level title opens the model list, which returns to the popover after a pick.
-- `@path` mentions and known `/commands` (including `/skill:...`) are highlighted in the input and in sent messages. Backspace right after a token first selects the whole token; a second Backspace deletes it, and any other key or click cancels. A path picked from the `@` menu, or a known command, stays one token when text follows it without a space (`@1.txt改成...`). Deleting text never opens the `/` or `@` menu; only typing does. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
-- A finished answer ends with a smile marker and a copy button.
-- `/` lists commands with fuzzy matching (`/awe` finds `/skill:awesome-review`). At the start of the input it lists the built-ins below and pi's extension, prompt template and skill commands; after a space in the middle of the text (`what is /`) it lists pi's commands and inserts the chosen one. `@` lists workspace files (fuzzy match, same matcher as pi's terminal UI) and inserts `@path`, like the terminal UI.
-- Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
-- Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
-- pi starts when the panel opens, so setup problems show before the first message (see [First run](#first-run)).
-- The gear button opens Settings: model providers (sign in, enter or replace an API key, sign out), model choice, the extension's VS Code settings, pi's `settings.json`, custom models (`models.json`, created from an Ollama example when missing), and the log. Saving `settings.json`, `models.json` or `auth.json` from VS Code restarts idle tabs, since pi reads them only at start. `Pi: Settings` and `Pi: Sign In to a Model Provider` open the same menus from the palette.
+- **Chat panel** in the activity bar, with streaming answers rendered as Markdown, collapsible thinking and tool calls, and a copy button on each finished answer.
+- **Review before changes**: with "Ask for approval" (default), every file edit opens in VS Code's diff editor and waits for Accept or Reject. Shell commands that delete, move or modify files (`rm`, `mv`, `> file`, `git reset`, `npm install`, ...) also wait for your approval. "Auto edit" applies changes directly.
+- **Editor context**: attach the current selection, the current file or its problems, or mention any workspace file with `@`.
+- **Tabs**: each tab runs its own pi, so several tasks can run at the same time. Sessions are saved and can be resumed, renamed, forked or deleted.
+- **Models**: sign in with a subscription account or an API key, pick a model and thinking level, or add local and custom models (Ollama, LM Studio, compatible endpoints).
+- **Commands**: `/` lists pi's commands, skills and prompt templates; `@` lists files.
 
-## Which pi runs, and where its configuration lives
+## Requirements
 
-- **Program**: the installed extension runs the pi bundled in the VSIX (`dist/pi`), never a pi installed on the machine. The Extension Development Host runs this repository's pi source. `pi.cliPath` can point at another pi entry point.
-- **Configuration**: the bundled pi uses the same agent directory as pi in the terminal: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when set. Logins and API keys (`auth.json`), the default model (`settings.json`), custom providers and models (`models.json`) and sessions are shared both ways. A login made with `pi` in the terminal shows up in the extension after its tabs restart, and a login made in the extension works in the terminal.
-- **Model menu**: lists models whose provider has credentials (stored, environment variable, or `models.json`), from pi's `get_available_models`.
+- VS Code 1.100 or newer.
+- Node.js 22.19 or newer. Recent VS Code versions include a new enough Node.js, which the extension uses automatically. If yours does not, the extension tells you on first start; install Node.js from [nodejs.org](https://nodejs.org/) or set `pi.nodePath`.
+- An account or API key for a model provider (for example Anthropic, OpenAI, Google, GitHub Copilot, OpenRouter), or a local model server.
 
-## First run
+## Installation
 
-Until chatting is possible, the panel shows a setup card instead of the chat, and the composer is disabled. The checks run in this order when the panel opens:
+1. Download `pi-vscode-plugin-<version>.vsix` from the [Releases page](https://github.com/SeanInBeta/pi/releases).
+2. In VS Code, open the Extensions view, click `...` at the top, choose **Install from VSIX...**, and select the file.
 
-1. **No folder open**: "Open a folder to start" with an Open Folder button. pi works in the first workspace folder and keeps sessions per folder.
-2. **pi cannot start**: before starting pi, the extension checks its Node.js. The installed extension uses VS Code's own Node when it is 22.19 or later, as pi requires; otherwise it asks `node` on `PATH` (or `pi.nodePath`) for its version. A missing or older Node.js shows "Node.js 22.19 or newer is required" with the exact problem, a download link, Open Settings and Retry. Any other start failure shows the error with Show Log and Retry. Changing `pi.nodePath`, `pi.cliPath` or `pi.args` retries automatically.
-3. **No model configured**: pi reports no usable model when no provider has credentials. The card "Connect a model provider" offers:
-   - **Sign in with an account** (OAuth, for example Anthropic, GitHub Copilot, OpenAI Codex): pick the provider; the sign-in page opens in the browser (VS Code asks before opening it). The card shows progress, a device code when the provider uses one, and a field to paste the redirect URL or code when the browser runs on another machine. Cancel stops the sign-in.
-   - **Use an API key**: pick the provider and enter the key in VS Code's masked input box.
+   Or from a terminal:
 
-   After signing in, pi selects the provider's default model and saves it as the default, and the chat appears. Credentials go to pi's `auth.json` (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), shared with pi in the terminal, so an existing pi login is reused and no card appears. Environment variables such as `ANTHROPIC_API_KEY` also count as configured.
+   ```bash
+   code --install-extension pi-vscode-plugin-<version>.vsix
+   ```
 
-Sign-in uses the `get_auth_providers`, `login`, `abort_login` and `logout` RPC commands, which this branch adds to pi.
+3. Click the **Pi** icon in the activity bar.
 
-## Reviewing file changes
+To update, install the newer VSIX the same way. To uninstall, use the Extensions view; your pi settings, logins and sessions stay in `~/.pi/agent`.
 
-The approval mode, switchable in the composer or with the `pi.approvalMode` setting, decides what happens when pi changes files. With "Ask for approval" (default) every change waits for your decision before any file is touched; with "Auto edit" it is applied directly. Reviews cover:
+## First start
 
-- `edit` and `write` calls, shown as a diff (steps below);
-- `bash` and `powershell` commands that may delete, move or modify files, shown in the chat under the command ("Run this command? It deletes files (rm).") without a diff. A rejected command is not run, and the model is told why.
+The Pi panel walks you through what is missing before you can chat:
 
-A command counts as file-changing when it uses a delete, move or write command (`rm`, `del`, `Remove-Item`, `mv`, `Rename-Item`, `cp`, `mkdir`, `touch`, `chmod`, `tee`, `Set-Content`, ...), an output redirect (`> file`, `>> file`; not `2>&1` or `> /dev/null`), `sed -i`/`perl -i`, `find -delete`/`-exec`, a git command that changes the working tree (`checkout`, `restore`, `reset`, `clean`, `stash`, `pull`, `merge`, ...), or a package install (`npm install`, `pip install`, ...). This is a check of the command text: it cannot see what a script or program such as `python script.py` does internally. The rules and their tests are in `src/command-review.ts` and `test/command-review.test.ts`.
+1. **Open a folder.** pi works inside a project folder: it reads and changes files there and saves sessions per folder.
+2. **Node.js check.** If no suitable Node.js is found, the panel explains what to install. Click **Retry** afterwards.
+3. **Connect a model provider.**
+   - **Sign in with an account**: choose the provider; the sign-in page opens in your browser. If the browser runs on another machine, paste the final redirect URL into the panel.
+   - **Use an API key**: choose the provider and paste the key into the input box.
 
-For `edit` and `write`:
+   pi then selects the provider's default model and the chat appears.
 
-1. The diff editor opens with the file on disk on the left and pi's exact new content on the right (an empty left side for a new file).
-2. Accept or Reject with the buttons shown in the chat right under the `edit`/`write` call, the check and close buttons in the diff editor title bar, or `Pi: Accept Proposed Change` / `Pi: Reject Proposed Change`.
-3. Accept writes the file and pi continues. Reject leaves the file untouched and the tool call fails with "The user rejected this change", so the model sees it. Aborting the run closes the review without writing.
+If you already use pi in a terminal, your existing logins and settings are picked up and these steps are skipped.
 
-Closing the diff tab does not decide; the review stays pending until Accept, Reject or Abort. Reviews are shown one at a time.
+## Using pi
 
-How it works: the extension always starts pi with the review extension (`src/pi-extension/review-changes.ts` in development, its compiled copy `dist/pi-extension/review-changes.js` in the VSIX). That pi extension replaces the built-in `edit` and `write` tools with copies whose final file write first calls `ctx.ui.select(..., ["Accept", "Reject"], { metadata })`, and handles pi's `tool_call` event to review file-changing `bash` and `powershell` commands before they run (a rejected call is blocked). The metadata carries the path and the complete new content, so pi's own edit logic decides the content and the review shows exactly what will be written. Directories for a new file are created only after Accept.
+- Type a message and press **Enter** (Shift+Enter for a new line). While pi works, the send button becomes a stop button (or press Esc); typing a message while pi works steers it.
+- **Attach context** with the `+` button, the editor's right-click menu (**Add Selection / File / Problems to Pi Chat**), or `@file`.
+- **Review changes**: an edit opens a diff; click **Accept** or **Reject** under the tool call in the chat, or use the check and close buttons in the diff editor. Switch between "Ask for approval" and "Auto edit" in the composer.
+- **Model and thinking level**: click the model name at the bottom right.
+- **Tabs and sessions**: `+` opens a tab. Click the active tab (or right-click any tab) for New session, Rename, Fork, Close and Delete, and to reopen recent sessions.
 
-## Extension dialogs
-
-Dialogs from any pi extension use native VS Code UI:
-
-| pi extension UI call | VS Code |
-|---|---|
-| `select` | QuickPick (a file change review when it carries review metadata) |
-| `confirm` | Modal Yes/No dialog |
-| `input` | Input box |
-| `editor` | Untitled document with Submit/Cancel notification |
-| `notify` | Information, warning or error notification |
-| `setStatus` | Status bar item per status key |
-| `set_editor_text` | Chat composer text |
-| `setWidget`, `setTitle` | Written to the `Pi` log only |
-
-Dialogs are shown one at a time. When pi resolves a dialog itself (timeout, abort), the VS Code dialog closes where the API allows it (QuickPick, input box, reviews).
-
-## Sessions and models
-
-pi saves sessions as usual (disable with `"pi.args": ["--no-session"]`). The session menu (active tab or history button) has Fork, Rename and the saved sessions of this folder, newest first. `/new` starts a new session in the current tab; `+` opens a new tab. Palette commands (`Pi: Switch Session`, `Pi: Select Model`, ...) and the status bar model item open the same in-panel menus.
-
-Built-in slash commands, handled by the extension like pi's terminal UI handles them:
+Useful commands in the chat:
 
 | Command | Action |
 |---|---|
-| `/new` | Start an empty session |
-| `/resume` | Open the session menu |
-| `/model [provider/model]` | Open the model menu, or switch directly |
-| `/thinking [level]` | Open the model menu, or set the level directly |
-| `/fork` | Pick an earlier user message; pi starts a new session from before it and the message returns to the composer |
-| `/clone` | Duplicate the current session |
-| `/name [name]` | Rename inline in the header, or set the name directly |
-| `/compact [instructions]` | Compact the session context |
-| `/copy` | Copy the last assistant message |
-| `/login [provider]` | Open the provider list, or the named provider's sign-in options (`/login openai`) |
-| `/logout` | Sign out of a provider with stored credentials |
-
-Other `/` commands are sent to pi. Session commands are refused while pi is working. When `pi.args` resumes a session (`--continue`, `--session`), its transcript loads on start.
-
-Saved sessions are listed through the `list_sessions` RPC command, which this branch adds to pi.
-
-## Editor context
-
-Attach context from the editor, then type a message (or send the attachments alone):
-
-| Command | Where | Attaches |
-|---|---|---|
-| `Pi: Add Selection to Pi Chat` | Editor context menu (with a selection), palette | Each non-empty selection with its line range |
-| `Pi: Add File to Pi Chat` | Editor and explorer context menus, palette | The file's current text, including unsaved edits. Files over 100,000 characters are attached by path only |
-| `Pi: Add Problems to Pi Chat` | Editor context menu, palette | Errors and warnings of the active file, or errors across the workspace when no file is active (at most 100) |
-
-Attachments appear as chips above the input and can be removed before sending. A sent message shows the typed text with its attachments as expandable chips. pi receives each attachment as a labeled block before the message, for example:
-
-````
-Selected code from src/a.ts lines 10-20:
-```typescript
-...
-```
-
-Problems reported by VS Code in src/a.ts:
-- src/a.ts:1:7 error [ts 2322]: Type 'string' is not assignable to type 'number'.
-  | const x: number = "oops";
-
-Why does this fail?
-````
-
-Code layout:
-
-| File | Role |
-|---|---|
-| `src/chat-state.ts` | Pure reducer from pi RPC events to transcript items, plus the diff sent to the webview |
-| `src/chat-view.ts` | Webview view provider; keeps the transcript and replays it when the webview reloads |
-| `src/editor-context.ts` | Builds attachments from selections, documents, and diagnostics |
-| `src/prompt-context.ts` | Formats attachments into the prompt text (pure, tested) |
-| `src/quick-picks.ts` | QuickPick items for sessions, models, forks and thinking levels (pure, tested) |
-| `src/extension-ui.ts` | Native VS Code UI for pi extension UI requests, including the diff review |
-| `src/file-change.ts` | Review metadata shared by both sides |
-| `src/command-review.ts` | Decides which shell commands may change files (pure, tested) |
-| `src/pi-extension/review-changes.ts` | pi extension (runs inside pi) that routes edit and write through a review |
-| `src/webview/main.ts` | Webview renderer (plain DOM, no framework), typechecked by `tsconfig.webview.json` |
-| `src/webview/markdown.ts` | Markdown to DOM using only `marked`'s lexer; nodes are built with `textContent`, never `innerHTML` |
-
-## Commands
-
-| Command | Action |
-|---|---|
-| `Pi: Start` | Start pi for the first workspace folder |
-| `Pi: Send Prompt` | Ask for a message and send it as a `prompt` command (starts pi if needed) |
-| `Pi: Abort` | Abort the current run |
-| `Pi: Stop` | Stop the pi process |
-| `Pi: Show Log` | Show the `Pi` output channel (also opened by clicking the status bar item) |
-| `Pi: Settings` | Open the settings menu in the panel |
-| `Pi: Sign In to a Model Provider` | Open the provider list in the panel |
+| `/login [provider]` | Sign in to a model provider |
+| `/logout` | Sign out of a provider |
+| `/model [provider/model]` | Choose a model |
+| `/thinking [level]` | Set the thinking level |
+| `/new` | Start a new session in this tab |
+| `/resume` | Open a saved session |
+| `/fork` | Continue from an earlier message in a new session |
+| `/compact` | Summarize the conversation to free up context |
+| `/copy` | Copy the last answer |
 
 ## Settings
 
-- `pi.cliPath`: another pi CLI entry point, run with `node`. Empty uses the pi bundled in the VSIX, or in development `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source through `tsx`, so pi does not need to be built.
-- `pi.nodePath`: Node.js executable that runs pi (22.19 or later), in the VSIX and in development. Empty uses VS Code's own Node when it is new enough (VSIX only), otherwise `node` from `PATH`.
-- `pi.args`: extra pi CLI arguments, for example `["--provider", "anthropic", "--model", "claude-sonnet-5"]`.
-- `pi.approvalMode`: `ask` (default) reviews every edit and write in a diff editor first; `auto` applies them directly. Also switchable in the composer.
+Click the gear in the panel header (or run **Pi: Settings**):
 
-## Development
+- **Model providers**: sign in, replace an API key, or sign out.
+- **Choose model**.
+- **Extension settings**: the VS Code settings below.
+- **pi settings file** and **Custom models**: pi's `settings.json` and `models.json`. Custom models start from an Ollama example; see pi's [model guide](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md). Saving either file reloads pi.
 
-Requires `node` on `PATH` and hydrated model data (`npm run hydrate:model-data` from the repository root).
+| VS Code setting | Default | Description |
+|---|---|---|
+| `pi.approvalMode` | `ask` | `ask` reviews every file change first; `auto` applies changes directly |
+| `pi.nodePath` | empty | Node.js 22.19+ executable for pi, when VS Code's own Node.js is too old |
+| `pi.args` | `[]` | Extra pi command-line arguments, for example `["--no-session"]` |
+| `pi.cliPath` | empty | Run a different pi instead of the included one (advanced) |
 
-```bash
-npm install --ignore-scripts          # from the repository root
-npm --prefix packages/vscode run build
-code --extensionDevelopmentPath="$PWD/packages/vscode" /path/to/project
-```
+## Where your data is stored
 
-To try the extension without an API key, point pi at the scripted provider in `test/fixtures/smoke-provider.ts` (user or workspace settings):
+The extension runs the pi included in it, but shares its configuration folder with pi in the terminal: `~/.pi/agent` (or `PI_CODING_AGENT_DIR` when set).
 
-```json
-"pi.args": ["--extension", "<repo>/packages/vscode/test/fixtures/smoke-provider.ts", "--provider", "smoke", "--model", "faux-1"]
-```
-
-`smoke:edit` makes it edit `sample.ts` (replacing `return a + b;`), `smoke:write [path]` makes it write a file, `smoke:rm <path>` makes it run `rm <path>`, and `/smoke-ui` runs confirm, select and input dialogs. Other messages get thinking, a reply that lists the attached context blocks, and a `bash ls` tool call, followed by a Markdown summary. The provider has two models: `faux-1` (reasoning) and `faux-2`.
-
-Run the tests (source launcher, sessions against local pi, prompt formatting, quick picks, and chat reducer against the faux provider):
-
-```bash
-cd packages/vscode
-node ../../node_modules/vitest/dist/cli.js --run
-```
-
-## Packaging
-
-```bash
-npm install --ignore-scripts          # from the repository root
-npm run hydrate:model-data            # from the repository root
-npm --prefix packages/vscode run package
-code --install-extension packages/vscode/pi-vscode-plugin-<version>.vsix
-```
-
-`npm run package` runs `scripts/build-package.mjs`, then `vsce package`. The VSIX is self-contained: it needs neither this repository nor a global pi.
-
-The build refuses to package when:
-
-- the extension's version differs from the bundled pi's (`packages/coding-agent/package.json`); the extension carries pi's version, currently 0.87.1;
-- pi's model data is missing or stale (`npm run check:model-data`). Stale catalogs load as empty, so the bundled pi would offer no built-in models. Run `npm run hydrate:model-data` first; it needs network access to models.dev.
-
-| Path in the VSIX | Content |
+| File | Content |
 |---|---|
-| `dist/extension.cjs`, `dist/webview/` | Extension and chat panel, bundled and minified |
-| `dist/pi-extension/review-changes.js` | The review extension, compiled; its `@earendil-works/*` imports resolve to the modules inside the bundled pi |
-| `dist/pi/` | pi, bundled from this repository's source (so it includes this fork's pi changes), laid out like pi's npm package: `dist/bundle/rpc-entry.js`, themes, docs, examples, and `node_modules` with `jiti` (loads TypeScript extensions) and `photon-node` (image resizing) |
-| `dist/THIRD_PARTY_NOTICES.txt` | Licenses of all bundled packages |
+| `auth.json` | Logins and API keys. Keep it private. |
+| `settings.json` | Default model and other pi settings |
+| `models.json` | Custom providers and models |
+| `sessions/` | Saved conversations |
 
-The installed extension (VS Code's production mode) runs `dist/pi` with `PI_PACKAGE_DIR` pointing at it. It uses VS Code's own Node (the editor binary with `ELECTRON_RUN_AS_NODE=1`) when that is 22.19 or later, as pi requires; older VS Code builds fall back to `node` from `PATH`, or `pi.nodePath`. The Extension Development Host keeps running pi from source as described under [Development](#development).
+Your messages, attached context and the files pi reads go to the model provider you choose. The extension itself collects no telemetry. The included pi behaves as in the terminal: it downloads model catalog updates from pi.dev and adds attribution headers to some provider requests; set `"enableInstallTelemetry": false` in `settings.json` to turn off the headers.
 
+## Troubleshooting
 
-## Known limitations
+- **"Node.js 22.19 or newer is required"**: install Node.js 22.19+ and click Retry, or set `pi.nodePath` to its path.
+- **"pi could not start"**: click **Show Log** (or run **Pi: Show Log**) for details.
+- **A model does not appear**: sign in to its provider (`/login`), or add it to `models.json`. Models appear only for providers with credentials.
+- **Project skills or extensions in `.pi/` are not loaded**: pi loads project resources only for trusted folders. Add `"--approve"` to `pi.args`, or trust the folder once with pi in a terminal.
+- **pi stopped responding**: run **Pi: Stop**, then send a message again.
 
-- A slash command sent while pi is working is queued as a steering message, not run as a command.
-- In RPC mode pi cannot show its project trust prompt, so project `.pi` extensions, skills and prompts load only with `--approve` in `pi.args`, a saved `/trust` decision, or `defaultProjectTrust: "always"`.
-- If the pi process exits unexpectedly, run `Pi: Stop` and then `Pi: Start`.
-- A reloaded session shows messages sent with attachments as their full prompt text, not as chips.
+## License
+
+MIT. Includes pi (MIT, Copyright (c) 2025 Mario Zechner) and other open source packages; see `dist/THIRD_PARTY_NOTICES.txt` in the installed extension. Development and packaging notes are in `packages/vscode/DEVELOPMENT.md` in the source repository.
