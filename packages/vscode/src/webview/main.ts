@@ -105,7 +105,7 @@ function renderItem(item: ChatItem): HTMLElement {
 		}
 		if (item.text) {
 			const text = create("div", "text");
-			renderTokens(text, item.text, controls.isCommand);
+			renderTokens(text, item.text, controls.tokenRules);
 			container.append(text);
 		}
 		return container;

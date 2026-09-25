@@ -530,8 +530,8 @@ button {
 
 /* Selected by the first Backspace; the next Backspace deletes it. */
 .token-selected {
-	background: color-mix(in srgb, currentColor 38%, transparent);
-	box-shadow: 0 0 0 1px currentColor;
+	color: var(--vscode-editor-selectionForeground, #fff);
+	background: var(--vscode-editor-selectionBackground, #264f78);
 }
 
 .toolbar {

@@ -8,7 +8,7 @@ import type {
 	PanelMeta,
 	WebviewMessage,
 } from "../chat-types.ts";
-import { tokenEndingAt } from "../text-tokens.ts";
+import { type TokenRules, tokenEndingAt } from "../text-tokens.ts";
 import { Menu, type MenuOptions } from "./menu.ts";
 import { renderTokens } from "./tokens.ts";
 
@@ -97,10 +97,15 @@ export class Controls {
 		this.bindEvents();
 	}
 
-	/** Whether `/name` is a known command, for highlighting. */
-	readonly isCommand = (name: string): boolean =>
-		this.builtins.some((command) => command.name === name) ||
-		(this.piCommands ?? []).some((item) => item.value === `pi:${name}`);
+	/** Paths picked from the `@` menu; they stay one token even when text is typed right after them. */
+	private readonly knownMentions = new Set<string>();
+	/** Which `/name` and `@path` words are highlighted as tokens. */
+	readonly tokenRules: TokenRules = {
+		isCommand: (name) =>
+			this.builtins.some((command) => command.name === name) ||
+			(this.piCommands ?? []).some((item) => item.value === `pi:${name}`),
+		isMention: (path) => this.knownMentions.has(path),
+	};
 
 	setMeta(meta: PanelMeta): void {
 		this.meta = meta;
@@ -238,7 +243,7 @@ export class Controls {
 		this.autoResize();
 		this.updateSendButton();
 		// A trailing space keeps the layer as tall as the textarea when the text ends with a newline.
-		renderTokens(this.highlight, `${this.input.value} `, this.isCommand, this.selectedToken?.start);
+		renderTokens(this.highlight, `${this.input.value} `, this.tokenRules, this.selectedToken?.start);
 		this.highlight.scrollTop = this.input.scrollTop;
 	}
 
@@ -250,7 +255,7 @@ export class Controls {
 		if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
 		const { selectionStart, selectionEnd } = this.input;
 		if (selectionStart !== selectionEnd) return false;
-		const token = tokenEndingAt(this.input.value, selectionStart, this.isCommand);
+		const token = tokenEndingAt(this.input.value, selectionStart, this.tokenRules);
 		if (!token) return false;
 		this.selectedToken = token;
 		this.input.setSelectionRange(token.start, token.end);
@@ -293,10 +298,12 @@ export class Controls {
 				this.post({ type: "abort" });
 			}
 		});
-		this.input.addEventListener("input", () => {
+		this.input.addEventListener("input", (event) => {
 			this.selectedToken = undefined;
 			this.inputChanged();
-			this.updateInlineMenu();
+			// Typing opens the `/` and `@` menus; deleting only updates one that is already open.
+			const deleting = event instanceof InputEvent && event.inputType.startsWith("delete");
+			if (!deleting || this.composerMode === "commands" || this.composerMode === "files") this.updateInlineMenu();
 		});
 		// Moving the caret or selection in any other way drops the token selection.
 		document.addEventListener("selectionchange", () => {
@@ -471,6 +478,7 @@ export class Controls {
 
 	/** Replace the `@partial` before the caret with `@path `. */
 	private insertMention(path: string): void {
+		this.knownMentions.add(path);
 		this.replaceBeforeCaret(/@[^\s@]*$/, `@${path} `);
 	}
 
