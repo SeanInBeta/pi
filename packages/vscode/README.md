@@ -109,4 +109,4 @@ Your messages, attached context and the files pi reads go to the model provider 
 
 ## License
 
-MIT. Includes pi (MIT, Copyright (c) 2025 Mario Zechner) and other open source packages; see `dist/THIRD_PARTY_NOTICES.txt` in the installed extension. Development and packaging notes are in `packages/vscode/DEVELOPMENT.md` in the source repository.
+MIT. Includes pi (MIT, Copyright (c) 2025 Mario Zechner) and other open source packages; see `dist/THIRD_PARTY_NOTICES.txt` in the installed extension. The source is on the [`vscode` branch of SeanInBeta/pi](https://github.com/SeanInBeta/pi/tree/vscode/packages/vscode); development and packaging notes are in [DEVELOPMENT.md](https://github.com/SeanInBeta/pi/blob/vscode/packages/vscode/DEVELOPMENT.md).

@@ -4,6 +4,41 @@ How the extension works, how to develop and test it, and how to package a releas
 
 The extension spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace folder and shows a chat panel in the Pi activity bar view. The raw event stream is also written to the `Pi` output channel.
 
+## Repository and branches
+
+The extension lives in the fork [SeanInBeta/pi](https://github.com/SeanInBeta/pi) of [earendil-works/pi](https://github.com/earendil-works/pi):
+
+| Branch or tag | Content |
+|---|---|
+| `main` | Tracks upstream pi; no extension code |
+| `vscode` | The extension (`packages/vscode`) plus the pi changes it needs; releases are built from here |
+| `vscode-v<version>` | Release tags on `vscode`, for example `vscode-v0.87.1`, each with a GitHub Release carrying the VSIX |
+
+The extension bundles pi from this branch's source, so it needs these changes to pi, kept as separate `(coding-agent)` commits so they can be offered upstream:
+
+| Commit | Change |
+|---|---|
+| `fix(coding-agent): reject RpcClient commands whose response reports failure` | `RpcClient` throws on `success: false` responses |
+| `feat(coding-agent): add list_sessions RPC command` | Saved sessions of the current folder |
+| `feat(coding-agent): forward dialog metadata and handle extension UI in RpcClient` | Review metadata on dialogs; `onExtensionUIRequest`, `sendExtensionUIResponse` |
+| `feat(coding-agent): let RpcClient run the CLI with a chosen executable` | `RpcClientOptions.command`, used to run pi on VS Code's Node |
+| `feat(coding-agent): add login, logout and provider auth RPC commands` | `get_auth_providers`, `login`, `abort_login`, `logout` |
+
+List them with `git log --oneline --grep="(coding-agent)" main..vscode`.
+
+To bring in a new upstream pi release:
+
+```bash
+git remote add upstream https://github.com/earendil-works/pi.git   # once
+git fetch upstream
+git checkout main && git merge --ff-only upstream/main && git push origin main
+git checkout vscode && git merge main
+# resolve conflicts, then set packages/vscode/package.json "version" to the new pi version
+npm install --ignore-scripts && npm run hydrate:model-data && npm run check
+```
+
+Merge rather than rebase, so `vscode` keeps its published history and release tags.
+
 ## Chat panel behavior
 
 - Tabs work like terminals: every tab runs its own pi process, so tabs work at the same time. A tab's dot pulses while pi works, turns green when the run finished, and red when it needs you (a pending Accept/Reject) or the run was aborted or failed. `+` opens a tab and the trash icon stops and closes one; the last tab cannot be closed. Clicking the active tab, or right-clicking any tab, opens the session menu: New session, Rename, Fork, Close tab, Delete session (moves the session file to the trash after confirmation; where the file system has no trash, a second confirmation deletes it permanently), and recent sessions (opened in a tab, or in an empty current tab). When the tabs overflow, a small navigation bar under them scrolls the strip (drag it, click it, or use the mouse wheel over the tabs). Open tabs and their sessions are restored when the window reloads. Session and model choices open inside the panel, not in VS Code's quick pick.
@@ -34,7 +69,7 @@ Until chatting is possible, the panel shows a setup card instead of the chat, an
 
    After signing in, pi selects the provider's default model and saves it as the default, and the chat appears. Credentials go to pi's `auth.json` (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), shared with pi in the terminal, so an existing pi login is reused and no card appears. Environment variables such as `ANTHROPIC_API_KEY` also count as configured.
 
-Sign-in uses the `get_auth_providers`, `login`, `abort_login` and `logout` RPC commands, which this branch adds to pi.
+Sign-in uses the `get_auth_providers`, `login`, `abort_login` and `logout` RPC commands, which the `vscode` branch adds to pi.
 
 ## Reviewing file changes
 
@@ -94,7 +129,7 @@ Built-in slash commands, handled by the extension like pi's terminal UI handles 
 
 Other `/` commands are sent to pi. Session commands are refused while pi is working. When `pi.args` resumes a session (`--continue`, `--session`), its transcript loads on start.
 
-Saved sessions are listed through the `list_sessions` RPC command, which this branch adds to pi.
+Saved sessions are listed through the `list_sessions` RPC command, which the `vscode` branch adds to pi.
 
 ## Editor context
 
@@ -209,11 +244,11 @@ The installed extension (VS Code's production mode) runs `dist/pi` with `PI_PACK
 
 ## Release checklist
 
-1. Bring in upstream pi if wanted, and keep `packages/vscode/package.json` `version` equal to `packages/coding-agent/package.json` (the build enforces it).
+1. On `vscode`, bring in upstream pi if wanted (see [Repository and branches](#repository-and-branches)), and keep `packages/vscode/package.json` `version` equal to `packages/coding-agent/package.json` (the build enforces it).
 2. `npm install --ignore-scripts` and `npm run hydrate:model-data` (needs network access to models.dev).
 3. `npm run check` and `./test.sh`, plus the extension tests (`cd packages/vscode && node ../../node_modules/vitest/dist/cli.js --run`).
 4. `npm --prefix packages/vscode run package`, install the VSIX in a clean VS Code profile (`code --profile Test --install-extension ...`), and check the first-run card, a sign-in, a chat, and an edit review.
-5. Tag the commit (`vscode-v<version>`) and attach the VSIX to a GitHub Release.
+5. Tag the commit and push the tag (`git tag vscode-v<version> && git push origin vscode-v<version>`), then create a GitHub Release from the tag and attach the VSIX.
 
 ## Known limitations
 

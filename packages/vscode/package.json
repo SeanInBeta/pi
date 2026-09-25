@@ -10,6 +10,10 @@
 		"url": "https://github.com/SeanInBeta/pi.git",
 		"directory": "packages/vscode"
 	},
+	"homepage": "https://github.com/SeanInBeta/pi/tree/vscode/packages/vscode",
+	"bugs": {
+		"url": "https://github.com/SeanInBeta/pi/issues"
+	},
 	"private": true,
 	"type": "module",
 	"main": "./dist/extension.cjs",
