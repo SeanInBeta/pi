@@ -174,7 +174,7 @@ const ICONS = {
 	plus: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>',
 	history:
 		'<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>',
-	gear: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" /></svg>',
+	gear: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.51 6.09 14.44 6.56v2.88l-1.93.47.03-.07 1.03 1.7-2.03 2.03-1.7-1.03.07-.03-.47 1.93H6.56l-.47-1.93.07.03-1.7 1.03-2.03-2.03 1.03-1.7.03.07-1.93-.47V6.56l1.93-.47-.03.07-1.03-1.7 2.03-2.03 1.7 1.03-.07.03.47-1.93h2.88l.47 1.93-.07-.03 1.7-1.03 2.03 2.03-1.03 1.7Z" /><circle cx="8" cy="8" r="2" /></svg>',
 	chevron: '<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>',
 	chevronRight:
 		'<svg class="icon small" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 4.5 10 8l-3.5 3.5" /></svg>',
