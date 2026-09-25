@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import * as vscode from "vscode";
 import type { RpcAuthEvent } from "../../coding-agent/src/modes/rpc/rpc-types.ts";
 import type {
@@ -98,6 +98,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				if (runtimeSetting && this.active.startError) void this.retryStart();
 			}),
 			vscode.workspace.onDidChangeWorkspaceFolders(() => void this.startActive()),
+			vscode.workspace.onDidSaveTextDocument((document) => void this.agentFileSaved(document)),
 		);
 		this.publishMeta();
 	}
@@ -294,7 +295,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	async query(query: MenuQuery, text: string): Promise<MenuItem[]> {
 		if (query === "files") return fileItems(await this.workspaceFiles(), text);
 		if (query === "providers") {
-			const method = text === "oauth" || text === "api_key" ? text : undefined;
+			const method = text === "oauth" || text === "api_key" || text === "stored" ? text : undefined;
 			return providerItems(await this.active.authProviders(), method);
 		}
 		return this.active.query(query);
@@ -340,7 +341,9 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				await vscode.commands.executeCommand("workbench.action.openSettings", `@ext:${this.extensionId}`);
 				return;
 			case "openPiSettings":
-				return this.openPiSettings();
+				return this.openAgentFile("settings.json", "{}\n");
+			case "openModelsFile":
+				return this.openAgentFile("models.json", MODELS_TEMPLATE);
 			case "showLog":
 				return this.showLog();
 			default:
@@ -421,14 +424,29 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		);
 	}
 
-	/** pi's global settings file (shared with pi in the terminal), created when missing. */
-	private async openPiSettings(): Promise<void> {
-		const file = join(piAgentDir(), "settings.json");
+	/** A file in pi's agent directory (shared with pi in the terminal), created from `template` when missing. */
+	private async openAgentFile(name: string, template: string): Promise<void> {
+		const file = join(piAgentDir(), name);
 		if (!existsSync(file)) {
 			mkdirSync(dirname(file), { recursive: true });
-			writeFileSync(file, "{}\n");
+			writeFileSync(file, template);
 		}
 		await vscode.window.showTextDocument(vscode.Uri.file(file));
+	}
+
+	/**
+	 * pi reads settings.json, models.json and auth.json when it starts. After one is saved, idle tabs restart
+	 * (the shown one right away, others when next shown) so the model menu reflects the change.
+	 */
+	private async agentFileSaved(document: vscode.TextDocument): Promise<void> {
+		const file = document.uri.fsPath;
+		if (dirname(file) !== piAgentDir() || !AGENT_FILES.has(basename(file))) return;
+		const active = this.active;
+		await this.reloadOtherTabs(active);
+		if (active.status !== "idle") return;
+		await active.stop();
+		await this.startActive();
+		this.output.appendLine(`reloaded pi after ${basename(file)} changed`);
 	}
 
 	async prompt(): Promise<void> {
@@ -613,6 +631,22 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		void vscode.window.showErrorMessage(`Pi: ${message.split("\n")[0]}`);
 	}
 }
+
+/** pi's configuration files whose changes need a pi restart. */
+const AGENT_FILES = new Set(["settings.json", "models.json", "auth.json"]);
+
+/** Starting point for custom providers and models; see pi's docs/models.md. */
+const MODELS_TEMPLATE = `{
+	"providers": {
+		"ollama": {
+			"baseUrl": "http://localhost:11434/v1",
+			"api": "openai-completions",
+			"apiKey": "ollama",
+			"models": [{ "id": "qwen2.5-coder:7b" }]
+		}
+	}
+}
+`;
 
 function workspaceFolder(): string | undefined {
 	return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;

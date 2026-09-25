@@ -36,14 +36,16 @@ export function sessionTitle(session: Pick<RpcSessionSummary, "name" | "firstMes
  */
 export function providerItems(
 	providers: readonly RpcAuthProvider[],
-	method: "oauth" | "api_key" | undefined,
+	method: "oauth" | "api_key" | "stored" | undefined,
 ): MenuItem[] {
 	const supported = providers.filter((provider) =>
 		method === "oauth"
 			? !!provider.oauth
 			: method === "api_key"
 				? provider.apiKey
-				: !!provider.oauth || provider.apiKey,
+				: method === "stored"
+					? provider.source === "stored"
+					: !!provider.oauth || provider.apiKey,
 	);
 	return [...supported.filter((p) => p.configured), ...supported.filter((p) => !p.configured)].map((provider) => {
 		const choice: ProviderChoice = {
@@ -57,7 +59,7 @@ export function providerItems(
 		return {
 			label: provider.name,
 			description: provider.configured ? `Configured${provider.source ? ` (${provider.source})` : ""}` : undefined,
-			detail: method ? undefined : `Sign in with ${methods.join(" or ")}`,
+			detail: method === "oauth" || method === "api_key" ? undefined : `Sign in with ${methods.join(" or ")}`,
 			value: JSON.stringify(choice),
 			current: provider.configured,
 		};

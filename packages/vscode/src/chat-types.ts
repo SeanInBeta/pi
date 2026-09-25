@@ -84,7 +84,7 @@ export interface MenuItem {
 	current?: boolean;
 }
 
-/** `providers` lists model providers; its text filters by login method (`oauth`, `api_key`, or empty for all). */
+/** `providers` lists model providers; its text filters: `oauth`, `api_key`, `stored` (credentials pi saved, which sign-out can remove), or empty for all. */
 export type MenuQuery = "sessions" | "models" | "forks" | "commands" | "files" | "providers";
 
 /** Menus the host can open in the panel, for palette commands and the status bar. */
@@ -121,6 +121,7 @@ export type PanelCommand =
 	| "logout"
 	| "openSettings"
 	| "openPiSettings"
+	| "openModelsFile"
 	| "showLog";
 
 /** A provider in the providers menu; the menu item's value is this object as JSON. */

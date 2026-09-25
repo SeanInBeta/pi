@@ -78,6 +78,12 @@ export class Controls {
 			{ name: "new", description: "Start a new session", run: () => this.command("newSession") },
 			{ name: "resume", description: "Resume a different session", run: () => this.openSessions() },
 			{
+				name: "login",
+				description: "Sign in to a model provider, or /login <provider>",
+				run: (arg) => this.openProviders(undefined, arg),
+			},
+			{ name: "logout", description: "Sign out of a model provider", run: () => this.openProviders("stored") },
+			{
 				name: "model",
 				description: "Select model, or /model <provider/model>",
 				run: (arg) => (arg ? this.command("setModel", arg) : this.openModels()),
@@ -393,6 +399,11 @@ export class Controls {
 				description: "settings.json shared with pi in the terminal",
 				value: "openPiSettings",
 			},
+			{
+				label: "Custom models",
+				description: "models.json: local servers and compatible endpoints",
+				value: "openModelsFile",
+			},
 			{ label: "Show log", value: "showLog" },
 		];
 		this.headerMenu.open({
@@ -405,8 +416,11 @@ export class Controls {
 		});
 	}
 
-	/** Providers supporting `method`, or all providers with their sign-in and sign-out actions. */
-	private openProviders(method?: LoginRequest["method"]): void {
+	/**
+	 * Providers supporting `method`, configured ones for signing out, or all providers with their actions.
+	 * `find` (from `/login <provider>`) skips the list when it names a provider exactly.
+	 */
+	private openProviders(method?: LoginRequest["method"] | "stored", find?: string): void {
 		this.headerMenu.open({
 			sections: undefined,
 			searchable: true,
@@ -415,19 +429,34 @@ export class Controls {
 					? "Sign in with which account?"
 					: method === "api_key"
 						? "API key for which provider?"
-						: "Model providers",
-			emptyText: "No providers",
+						: method === "stored"
+							? "Sign out of which provider?"
+							: "Model providers",
+			emptyText: method === "stored" ? "No stored credentials" : "No providers",
 			onSelect: (item) => this.chooseProvider(JSON.parse(item.value) as ProviderChoice, method),
 		});
-		this.query("providers", method ?? "", (items) => this.headerMenu.update([{ items }]));
+		this.query("providers", method ?? "", (items) => {
+			const wanted = find?.trim().toLowerCase();
+			const match = wanted
+				? items
+						.map((item) => JSON.parse(item.value) as ProviderChoice)
+						.find((provider) => provider.id.toLowerCase() === wanted || provider.name.toLowerCase() === wanted)
+				: undefined;
+			if (match) this.chooseProvider(match, method);
+			else this.headerMenu.update([{ items }]);
+		});
 	}
 
-	private chooseProvider(provider: ProviderChoice, method: LoginRequest["method"] | undefined): void {
+	private chooseProvider(provider: ProviderChoice, method: LoginRequest["method"] | "stored" | undefined): void {
 		const login = (chosen: LoginRequest["method"]) =>
 			this.command(
 				"login",
 				JSON.stringify({ provider: provider.id, name: provider.name, method: chosen } satisfies LoginRequest),
 			);
+		if (method === "stored") {
+			this.command("logout", provider.id);
+			return;
+		}
 		if (method) {
 			login(method);
 			return;

@@ -118,6 +118,14 @@ describe("menu items", () => {
 		expect(apiKey.map((item) => item.label)).toEqual(["OpenAI", "Anthropic"]);
 		expect(apiKey[0]).toMatchObject({ description: "Configured (OPENAI_API_KEY)", current: true });
 		expect(providerItems(providers, "oauth").map((item) => item.label)).toEqual(["Anthropic"]);
+		// Sign-out removes stored credentials only; OpenAI's key comes from the environment.
+		expect(providerItems(providers, "stored")).toEqual([]);
+		expect(
+			providerItems(
+				[...providers, { id: "xai", name: "xAI", apiKey: true, configured: true, source: "stored" }],
+				"stored",
+			).map((item) => item.label),
+		).toEqual(["xAI"]);
 
 		const all = providerItems(providers, undefined);
 		expect(all.map((item) => item.label)).toEqual(["OpenAI", "Anthropic"]);

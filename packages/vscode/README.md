@@ -14,7 +14,13 @@ Spawns pi in [RPC mode](../coding-agent/docs/rpc.md) for the first workspace fol
 - Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts when the panel opens, so setup problems show before the first message (see [First run](#first-run)).
-- The gear button opens Settings: model providers (sign in, enter or replace an API key, sign out), model choice, the extension's VS Code settings, pi's `settings.json`, and the log. `Pi: Settings` and `Pi: Sign In to a Model Provider` open the same menus from the palette.
+- The gear button opens Settings: model providers (sign in, enter or replace an API key, sign out), model choice, the extension's VS Code settings, pi's `settings.json`, custom models (`models.json`, created from an Ollama example when missing), and the log. Saving `settings.json`, `models.json` or `auth.json` from VS Code restarts idle tabs, since pi reads them only at start. `Pi: Settings` and `Pi: Sign In to a Model Provider` open the same menus from the palette.
+
+## Which pi runs, and where its configuration lives
+
+- **Program**: the installed extension runs the pi bundled in the VSIX (`dist/pi`), never a pi installed on the machine. The Extension Development Host runs this repository's pi source. `pi.cliPath` can point at another pi entry point.
+- **Configuration**: the bundled pi uses the same agent directory as pi in the terminal: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when set. Logins and API keys (`auth.json`), the default model (`settings.json`), custom providers and models (`models.json`) and sessions are shared both ways. A login made with `pi` in the terminal shows up in the extension after its tabs restart, and a login made in the extension works in the terminal.
+- **Model menu**: lists models whose provider has credentials (stored, environment variable, or `models.json`), from pi's `get_available_models`.
 
 ## First run
 
@@ -83,6 +89,8 @@ Built-in slash commands, handled by the extension like pi's terminal UI handles 
 | `/name [name]` | Rename inline in the header, or set the name directly |
 | `/compact [instructions]` | Compact the session context |
 | `/copy` | Copy the last assistant message |
+| `/login [provider]` | Open the provider list, or the named provider's sign-in options (`/login openai`) |
+| `/logout` | Sign out of a provider with stored credentials |
 
 Other `/` commands are sent to pi. Session commands are refused while pi is working. When `pi.args` resumes a session (`--continue`, `--session`), its transcript loads on start.
 
