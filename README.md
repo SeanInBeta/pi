@@ -1,3 +1,30 @@
+# Pi for VS Code
+
+本仓库是 [earendil-works/pi](https://github.com/earendil-works/pi) 的 fork，在 `vscode` 分支上开发 **Pi for VS Code** 插件：在 VS Code 的聊天面板中使用 pi 编程助手，让它解释、编写或修改项目代码，附加编辑器上下文，并在每次文件改动写入之前先审查。插件内置了 pi，不需要另外安装。
+
+- **下载**：在 [Releases](https://github.com/SeanInBeta/pi/releases) 页面下载最新的 `.vsix` 文件，然后在 VS Code 扩展视图中通过 `...` → **Install from VSIX...** 安装。
+- **使用说明**：[packages/vscode/README.md](packages/vscode/README.md)
+- **开发与打包**：[packages/vscode/DEVELOPMENT.md](packages/vscode/DEVELOPMENT.md)
+- **问题反馈**：[Issues](https://github.com/SeanInBeta/pi/issues)
+
+分支说明：`main` 跟踪上游 pi，不含插件代码；`vscode` 包含插件以及它所需的 pi 改动，发布版本从这里构建，tag 格式为 `vscode-v<版本号>`。
+
+This repository is a fork of [earendil-works/pi](https://github.com/earendil-works/pi). The `vscode` branch develops **Pi for VS Code**, a chat panel for the pi coding agent inside VS Code: ask pi to explain, write or change code in your project, attach editor context, and review every file change before it is applied. pi is included in the extension, so there is nothing else to install.
+
+- **Download**: get the latest `.vsix` from the [Releases](https://github.com/SeanInBeta/pi/releases) page, then install it in VS Code's Extensions view via `...` → **Install from VSIX...**.
+- **User guide**: [packages/vscode/README.md](packages/vscode/README.md)
+- **Development and packaging**: [packages/vscode/DEVELOPMENT.md](packages/vscode/DEVELOPMENT.md)
+- **Bug reports**: [Issues](https://github.com/SeanInBeta/pi/issues)
+
+Branches: `main` tracks upstream pi and has no extension code; `vscode` contains the extension and the pi changes it needs. Releases are built from `vscode` and tagged `vscode-v<version>`.
+
+---
+
+*以下为上游 pi 项目的原始 README。*
+*The upstream pi README follows below.*
+
+---
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
