@@ -18,6 +18,7 @@ const KIND_LABELS: Record<Attachment["kind"], string> = {
 	selection: "Selection",
 	file: "File",
 	diagnostics: "Problems",
+	image: "Image",
 };
 
 const vscode = acquireVsCodeApi();
@@ -235,8 +236,18 @@ function renderAttachment(attachment: Attachment, index: number): HTMLElement {
 	details.className = "attachment";
 	details.dataset.key = `attachment-${index}`;
 	const summary = create("summary", "");
-	summary.append(create("span", "chip-kind", KIND_LABELS[attachment.kind]), create("span", "", attachment.label));
+	summary.append(
+		create("span", "chip-kind", KIND_LABELS[attachment.kind]),
+		create("span", "chip-label", attachment.label),
+	);
 	details.append(summary);
+	if (attachment.image) {
+		const image = document.createElement("img");
+		image.className = "chip-image";
+		image.alt = attachment.label;
+		image.src = `data:${attachment.image.mimeType};base64,${attachment.image.data}`;
+		details.append(image);
+	}
 	if (attachment.note) details.append(create("div", "muted", attachment.note));
 	if (attachment.content) details.append(create("pre", "", truncate(attachment.content)));
 	return details;

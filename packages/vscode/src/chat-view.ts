@@ -9,6 +9,7 @@ import type {
 	PanelCommand,
 	PanelMenu,
 	PanelMeta,
+	PastedImage,
 	WebviewMessage,
 } from "./chat-types.ts";
 
@@ -17,6 +18,8 @@ export interface ChatViewHandlers {
 	submit(text: string): Promise<void>;
 	abort(): Promise<void>;
 	removeAttachment(id: string): void;
+	/** Images pasted into the composer. */
+	pasteImages(images: (PastedImage & { name: string })[]): void;
 	/** Items for an in-panel menu. Failures are reported by the handler and yield an empty menu. */
 	query(query: MenuQuery, text: string): Promise<MenuItem[]>;
 	command(command: PanelCommand, arg: string | undefined): Promise<void>;
@@ -59,6 +62,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				void this.handlers.abort();
 			} else if (message.type === "removeAttachment") {
 				this.handlers.removeAttachment(message.id);
+			} else if (message.type === "pasteImages") {
+				this.handlers.pasteImages(message.images);
 			} else if (message.type === "query") {
 				void this.handlers
 					.query(message.query, message.text ?? "")
@@ -115,7 +120,7 @@ function renderHtml(webview: vscode.Webview, assets: vscode.Uri): string {
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<link rel="stylesheet" href="${style}">
 </head>

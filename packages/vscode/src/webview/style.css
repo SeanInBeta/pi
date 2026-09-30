@@ -700,8 +700,10 @@ button {
 	display: none;
 }
 
+/* border-box: with padding, max-width: 100% would otherwise overflow narrow panels by the padding. */
 .chip,
 .attachment > summary {
+	box-sizing: border-box;
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
@@ -715,11 +717,29 @@ button {
 }
 
 .chip-kind {
+	flex: none;
 	font-family: var(--vscode-font-family);
 	font-weight: 600;
 }
 
+/* Long paths end in an ellipsis instead of widening the chip. */
+.chip-label {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.chip-image {
+	display: block;
+	max-width: 100%;
+	max-height: 160px;
+	margin: 4px 0;
+	border-radius: 3px;
+}
+
 .chip-remove {
+	flex: none;
 	padding: 0 2px;
 	border: none;
 	color: inherit;
@@ -738,6 +758,7 @@ button {
 }
 
 .attachment {
+	box-sizing: border-box;
 	border-left: none;
 	padding-left: 0;
 	max-width: 100%;
@@ -1057,4 +1078,29 @@ button {
 .review-reject:disabled {
 	opacity: 0.5;
 	cursor: default;
+}
+
+/* Trash button on deletable menu rows, such as recent sessions. */
+.menu-delete {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	margin-left: auto;
+	padding: 1px 3px;
+	border: none;
+	border-radius: 3px;
+	color: inherit;
+	background: transparent;
+	opacity: 0;
+}
+
+.menu-item:hover .menu-delete,
+.menu-item.active .menu-delete {
+	opacity: 0.8;
+}
+
+.menu-delete:hover {
+	opacity: 1;
+	color: var(--vscode-errorForeground);
+	background: var(--vscode-toolbar-hoverBackground);
 }
