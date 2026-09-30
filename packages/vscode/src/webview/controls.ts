@@ -408,6 +408,11 @@ export class Controls {
 				description: "models.json: local servers and compatible endpoints",
 				value: "openModelsFile",
 			},
+			{
+				label: "MCP servers",
+				description: "mcp.json: tools from Model Context Protocol servers",
+				value: "openMcpFile",
+			},
 			{ label: "Show log", value: "showLog" },
 		];
 		this.headerMenu.open({
@@ -612,7 +617,8 @@ export class Controls {
 		).then((results) => {
 			const images = results.filter((image) => image !== undefined);
 			if (images.length > 0) this.post({ type: "pasteImages", images });
-			if (images.length < files.length) this.statusLine.textContent = "Some images were not attached (over 20 MB or unreadable).";
+			if (images.length < files.length)
+				this.statusLine.textContent = "Some images were not attached (over 20 MB or unreadable).";
 		});
 	}
 
@@ -774,10 +780,7 @@ export class Controls {
 			},
 			deletable: (item) => item.value.startsWith("session:"),
 			onDelete: (item) =>
-				this.command(
-					"deleteSavedSession",
-					JSON.stringify({ file: splitValue(item.value)[1], title: item.label }),
-				),
+				this.command("deleteSavedSession", JSON.stringify({ file: splitValue(item.value)[1], title: item.label })),
 		});
 		this.query("sessions", "", (items) =>
 			this.headerMenu.update([

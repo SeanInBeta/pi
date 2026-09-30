@@ -371,6 +371,8 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				return this.openAgentFile("settings.json", "{}\n");
 			case "openModelsFile":
 				return this.openAgentFile("models.json", MODELS_TEMPLATE);
+			case "openMcpFile":
+				return this.openAgentFile("mcp.json", MCP_TEMPLATE);
 			case "showLog":
 				return this.showLog();
 			default:
@@ -462,7 +464,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	}
 
 	/**
-	 * pi reads settings.json, models.json and auth.json when it starts. After one is saved, idle tabs restart
+	 * pi reads settings.json, models.json, mcp.json and auth.json when it starts. After one is saved, idle tabs restart
 	 * (the shown one right away, others when next shown) so the model menu reflects the change.
 	 */
 	private async agentFileSaved(document: vscode.TextDocument): Promise<void> {
@@ -660,7 +662,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 }
 
 /** pi's configuration files whose changes need a pi restart. */
-const AGENT_FILES = new Set(["settings.json", "models.json", "auth.json"]);
+const AGENT_FILES = new Set(["settings.json", "models.json", "mcp.json", "auth.json"]);
 
 /** Starting point for custom providers and models; see pi's docs/models.md. */
 const MODELS_TEMPLATE = `{
@@ -670,6 +672,18 @@ const MODELS_TEMPLATE = `{
 			"api": "openai-completions",
 			"apiKey": "ollama",
 			"models": [{ "id": "qwen2.5-coder:7b" }]
+		}
+	}
+}
+`;
+
+/** Starting point for MCP servers; see pi's docs/mcp.md. Disabled until the user edits it. */
+const MCP_TEMPLATE = `{
+	"mcpServers": {
+		"filesystem": {
+			"command": "npx",
+			"args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+			"enabled": false
 		}
 	}
 }

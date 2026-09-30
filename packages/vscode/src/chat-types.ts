@@ -132,6 +132,7 @@ export type PanelCommand =
 	| "openSettings"
 	| "openPiSettings"
 	| "openModelsFile"
+	| "openMcpFile"
 	| "showLog";
 
 /** A provider in the providers menu; the menu item's value is this object as JSON. */

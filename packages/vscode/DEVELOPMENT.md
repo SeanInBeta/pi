@@ -41,7 +41,7 @@ Merge rather than rebase, so `vscode` keeps its published history and release ta
 
 ## Chat panel behavior
 
-- Tabs work like terminals: every tab runs its own pi process, so tabs work at the same time. A tab's dot pulses while pi works, turns green when the run finished, and red when it needs you (a pending Accept/Reject) or the run was aborted or failed. `+` opens a tab and the trash icon stops and closes one; the last tab cannot be closed. Clicking the active tab, or right-clicking any tab, opens the session menu: New session, Rename, Fork, Close tab, Delete session (moves the session file to the trash after confirmation; where the file system has no trash, a second confirmation deletes it permanently), and recent sessions (opened in a tab, or in an empty current tab). When the tabs overflow, a small navigation bar under them scrolls the strip (drag it, click it, or use the mouse wheel over the tabs). Open tabs and their sessions are restored when the window reloads. Session and model choices open inside the panel, not in VS Code's quick pick.
+- Tabs work like terminals: every tab runs its own pi process, so tabs work at the same time. A tab's dot pulses while pi works, turns green when the run finished, and red when it needs you (a pending Accept/Reject) or the run was aborted or failed. `+` opens a tab and the trash icon stops and closes one; the last tab cannot be closed. Clicking the active tab, or right-clicking any tab, opens the session menu: New session, Rename, Fork, Close tab, Delete session (moves the session file to the trash after confirmation; where the file system has no trash, a second confirmation deletes it permanently), and recent sessions (opened in a tab, or in an empty current tab). Each recent session has a trash button that deletes it the same way (closing its tab if open) and reopens the menu with the updated list. When the tabs overflow, a small navigation bar under them scrolls the strip (drag it, click it, or use the mouse wheel over the tabs). Open tabs and their sessions are restored when the window reloads. Session and model choices open inside the panel, not in VS Code's quick pick.
 - The composer has a `+` menu (attach selection, current file, problems, mention a file), the approval mode, a model chip (model and thinking level), and a round send button. The model chip reads "Loading model..." until pi reports its model, then the model and thinking level. It opens a compact Codex-style popover: the thinking level on a slider with the model name below it; the level title opens the model list, which returns to the popover after a pick.
 - `@path` mentions and known `/commands` (including `/skill:...`) are highlighted in the input and in sent messages. Backspace right after a token first selects the whole token; a second Backspace deletes it, and any other key or click cancels. A path picked from the `@` menu, or a known command, stays one token when text follows it without a space (`@1.txt改成...`). Deleting text never opens the `/` or `@` menu; only typing does. Enter sends, Shift+Enter inserts a new line. While pi works, the button becomes a stop button (also Esc); typing turns it back into send, which steers the running agent.
 - A finished answer ends with a smile marker and a copy button.
@@ -49,7 +49,7 @@ Merge rather than rebase, so `vscode` keeps its published history and release ta
 - Assistant text streams in and renders as Markdown: headings, emphasis, lists, task lists, links, inline code, code blocks (no syntax highlighting), blockquotes, and tables. Raw HTML is shown as text, never rendered. Only `http`, `https`, and `mailto` links are clickable; VS Code opens them externally. Thinking and tool calls are collapsible; a tool call shows its main argument (command or path), its raw arguments, and its output.
 - Abort stops the current run. Errors from pi (failed requests, retries that gave up, rejected commands) appear in the transcript.
 - pi starts when the panel opens, so setup problems show before the first message (see [First run](#first-run)).
-- The gear button opens Settings: model providers (sign in, enter or replace an API key, sign out), model choice, the extension's VS Code settings, pi's `settings.json`, custom models (`models.json`, created from an Ollama example when missing), and the log. Saving `settings.json`, `models.json` or `auth.json` from VS Code restarts idle tabs, since pi reads them only at start. `Pi: Settings` and `Pi: Sign In to a Model Provider` open the same menus from the palette.
+- The gear button opens Settings: model providers (sign in, enter or replace an API key, sign out), model choice, the extension's VS Code settings, pi's `settings.json`, custom models (`models.json`, created from an Ollama example when missing), MCP servers (`mcp.json`, created with a disabled example server), and the log. Saving `settings.json`, `models.json`, `mcp.json` or `auth.json` from VS Code restarts idle tabs, since pi reads them only at start. `Pi: Settings` and `Pi: Sign In to a Model Provider` open the same menus from the palette.
 
 ## Which pi runs, and where its configuration lives
 
@@ -141,7 +141,9 @@ Attach context from the editor, then type a message (or send the attachments alo
 | `Pi: Add File to Pi Chat` | Editor and explorer context menus, palette | The file's current text, including unsaved edits. Files over 100,000 characters are attached by path only |
 | `Pi: Add Problems to Pi Chat` | Editor context menu, palette | Errors and warnings of the active file, or errors across the workspace when no file is active (at most 100) |
 
-Attachments appear as chips above the input and can be removed before sending. A sent message shows the typed text with its attachments as expandable chips. pi receives each attachment as a labeled block before the message, for example:
+Pasting images into the input (a screenshot, or image files copied in the file manager) attaches them as `Image` chips; when the clipboard also holds text, the text is pasted instead. Images are sent as pi's `images` on the `prompt` or `steer` command, not as prompt text, and appear in the sent message as expandable chips with a preview. Images over 20 MB are refused. pi resizes large images and notes that after the prompt text.
+
+Attachments appear as chips above the input and can be removed before sending. Long labels end in an ellipsis instead of widening the chip. A sent message shows the typed text with its attachments as expandable chips. pi receives each attachment as a labeled block before the message, for example:
 
 ````
 Selected code from src/a.ts lines 10-20:
@@ -186,7 +188,7 @@ Code layout:
 
 ## Settings
 
-- `pi.cliPath`: another pi CLI entry point, run with `node`. Empty uses the pi bundled in the VSIX, or in development `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source through `tsx`, so pi does not need to be built.
+- `pi.cliPath`: another pi CLI entry point, run with `node`. Empty uses the pi bundled in the VSIX, or in development `scripts/pi-dev-rpc.mjs`, which runs `packages/coding-agent/src/cli.ts` from source with plain Node and pi's source resolver, so pi does not need to be built.
 - `pi.nodePath`: Node.js executable that runs pi (22.19 or later), in the VSIX and in development. Empty uses VS Code's own Node when it is new enough (VSIX only), otherwise `node` from `PATH`.
 - `pi.args`: extra pi CLI arguments, for example `["--provider", "anthropic", "--model", "claude-sonnet-5"]`.
 - `pi.approvalMode`: `ask` (default) reviews every edit and write in a diff editor first; `auto` applies them directly. Also switchable in the composer.
@@ -236,7 +238,7 @@ The build refuses to package when:
 |---|---|
 | `dist/extension.cjs`, `dist/webview/` | Extension and chat panel, bundled and minified |
 | `dist/pi-extension/review-changes.js` | The review extension, compiled; its `@earendil-works/*` imports resolve to the modules inside the bundled pi |
-| `dist/pi/` | pi, bundled from this repository's source (so it includes this fork's pi changes), laid out like pi's npm package: `dist/bundle/rpc-entry.js`, themes, docs, examples, and `node_modules` with `jiti` (loads TypeScript extensions) and `photon-node` (image resizing) |
+| `dist/pi/` | pi, bundled from this repository's source (so it includes this fork's pi changes), laid out like pi's npm package: `dist/bundle/rpc-entry.js`, themes, docs, examples, and `node_modules` with `jiti` (loads TypeScript extensions), `photon-node` (image resizing) and `quickjs-wasi` (the codemode sandbox). OAuth flows (taken from `packages/ai/src/auth/oauth/load.ts`), Bedrock, and the image and codemode workers are separate files next to their loaders |
 | `dist/THIRD_PARTY_NOTICES.txt` | Licenses of all bundled packages |
 
 The installed extension (VS Code's production mode) runs `dist/pi` with `PI_PACKAGE_DIR` pointing at it. It uses VS Code's own Node (the editor binary with `ELECTRON_RUN_AS_NODE=1`) when that is 22.19 or later, as pi requires; older VS Code builds fall back to `node` from `PATH`, or `pi.nodePath`. The Extension Development Host keeps running pi from source as described under [Development](#development).
