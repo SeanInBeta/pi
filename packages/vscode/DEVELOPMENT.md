@@ -12,7 +12,7 @@ The extension lives in the fork [SeanInBeta/pi](https://github.com/SeanInBeta/pi
 |---|---|
 | `main` | Tracks upstream pi; no extension code |
 | `vscode` | The extension (`packages/vscode`) plus the pi changes it needs; releases are built from here |
-| `vscode-v<version>` | Release tags on `vscode`, for example `vscode-v0.87.1`, each with a GitHub Release carrying the VSIX |
+| `vscode-v<version>` | Release tags on `vscode`, for example `vscode-v0.99.1`, each with a GitHub Release carrying the VSIX |
 
 The extension bundles pi from this branch's source, so it needs these changes to pi, kept as separate `(coding-agent)` commits so they can be offered upstream:
 
@@ -229,7 +229,7 @@ code --install-extension packages/vscode/pi-vscode-plugin-<version>.vsix
 
 The build refuses to package when:
 
-- the extension's version differs from the bundled pi's (`packages/coding-agent/package.json`); the extension carries pi's version, currently 0.87.1;
+- the extension's version differs from the bundled pi's (`packages/coding-agent/package.json`); the extension carries pi's version, currently 0.99.1;
 - pi's model data is missing or stale (`npm run check:model-data`). Stale catalogs load as empty, so the bundled pi would offer no built-in models. Run `npm run hydrate:model-data` first; it needs network access to models.dev.
 
 | Path in the VSIX | Content |
