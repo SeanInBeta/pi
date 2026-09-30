@@ -12,7 +12,7 @@ import type {
 	WebviewMessage,
 } from "../chat-types.ts";
 import { type TokenRules, tokenEndingAt } from "../text-tokens.ts";
-import { Menu, type MenuOptions } from "./menu.ts";
+import { Menu, type MenuOptions, trashIcon } from "./menu.ts";
 import { renderTokens } from "./tokens.ts";
 
 type Post = (message: WebviewMessage) => void;
@@ -29,7 +29,11 @@ const KIND_LABELS: Record<Attachment["kind"], string> = {
 	selection: "Selection",
 	file: "File",
 	diagnostics: "Problems",
+	image: "Image",
 };
+
+/** Larger pasted images are refused; providers reject them anyway. */
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /** Header, composer and in-panel menus. The transcript is rendered by main.ts. */
 export class Controls {
@@ -333,7 +337,7 @@ export class Controls {
 				remove.addEventListener("click", () => this.post({ type: "removeAttachment", id: attachment.id }));
 				chip.append(
 					create("span", "chip-kind", KIND_LABELS[attachment.kind]),
-					create("span", "", attachment.label),
+					create("span", "chip-label", attachment.label),
 					remove,
 				);
 				return chip;
@@ -403,6 +407,11 @@ export class Controls {
 				label: "Custom models",
 				description: "models.json: local servers and compatible endpoints",
 				value: "openModelsFile",
+			},
+			{
+				label: "MCP servers",
+				description: "mcp.json: tools from Model Context Protocol servers",
+				value: "openMcpFile",
 			},
 			{ label: "Show log", value: "showLog" },
 		];
@@ -518,6 +527,7 @@ export class Controls {
 			this.selectedToken = undefined;
 			this.inputChanged();
 		});
+		this.input.addEventListener("paste", (event) => this.pasteImages(event));
 		this.input.addEventListener("scroll", () => {
 			this.highlight.scrollTop = this.input.scrollTop;
 		});
@@ -574,6 +584,42 @@ export class Controls {
 			}
 		});
 		this.renameInput.addEventListener("blur", () => this.finishRename());
+	}
+
+	/**
+	 * Pasted images (screenshots, copied image files) become draft attachments. When the clipboard also
+	 * holds text, for example cells copied from a spreadsheet, the text is pasted as usual.
+	 */
+	private pasteImages(event: ClipboardEvent): void {
+		const data = event.clipboardData;
+		if (!data || data.getData("text/plain")) return;
+		const files = [...data.files].filter((file) => file.type.startsWith("image/"));
+		if (files.length === 0) return;
+		event.preventDefault();
+		void Promise.all(
+			files.map(
+				(file, index) =>
+					new Promise<{ name: string; mimeType: string; data: string } | undefined>((resolve) => {
+						if (file.size > MAX_IMAGE_BYTES) {
+							resolve(undefined);
+							return;
+						}
+						const reader = new FileReader();
+						reader.onload = () => {
+							const url = String(reader.result);
+							const name = file.name && file.name !== "image.png" ? file.name : `pasted-image-${index + 1}`;
+							resolve({ name, mimeType: file.type, data: url.slice(url.indexOf(",") + 1) });
+						};
+						reader.onerror = () => resolve(undefined);
+						reader.readAsDataURL(file);
+					}),
+			),
+		).then((results) => {
+			const images = results.filter((image) => image !== undefined);
+			if (images.length > 0) this.post({ type: "pasteImages", images });
+			if (images.length < files.length)
+				this.statusLine.textContent = "Some images were not attached (over 20 MB or unreadable).";
+		});
 	}
 
 	private submit(): void {
@@ -732,6 +778,9 @@ export class Controls {
 				else if (value === "delete") this.command("deleteSession", this.activeTabId());
 				else this.startRename();
 			},
+			deletable: (item) => item.value.startsWith("session:"),
+			onDelete: (item) =>
+				this.command("deleteSavedSession", JSON.stringify({ file: splitValue(item.value)[1], title: item.label })),
 		});
 		this.query("sessions", "", (items) =>
 			this.headerMenu.update([
@@ -904,17 +953,6 @@ const INPUT_PLACEHOLDER = "Ask pi anything. / for commands, @ for files";
 
 function capitalize(text: string): string {
 	return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function trashIcon(): SVGSVGElement {
-	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute("class", "icon small");
-	svg.setAttribute("viewBox", "0 0 16 16");
-	svg.setAttribute("aria-hidden", "true");
-	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-	path.setAttribute("d", "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4");
-	svg.append(path);
-	return svg;
 }
 
 /** Split a `kind:value` menu value at the first colon. */

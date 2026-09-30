@@ -129,6 +129,33 @@ describe("chat state", () => {
 		expect(state.sent).toEqual([]);
 	});
 
+	// pi appends "[Image omitted: ...]" for image data it cannot use; the message still maps to its attachments.
+	it("shows a message with pasted images as the typed text plus its image attachments", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+		const image = { data: "aGVsbG8=", mimeType: "image/png" };
+		const attachment: Attachment = {
+			id: "i1",
+			kind: "image",
+			label: "shot.png",
+			path: "shot.png",
+			content: "",
+			image,
+		};
+		const prompt = buildPrompt("What is this?", [attachment]);
+		expect(prompt).toBe("What is this?");
+
+		await harness.session.prompt(prompt, { images: [{ type: "image", ...image }] });
+
+		const { state } = replay([
+			{ type: "prompt_sent", prompt, text: "What is this?", attachments: [attachment] },
+			...sessionActions(harness),
+		]);
+		expect(state.items[0]).toEqual({ kind: "user", text: "What is this?", attachments: [attachment] });
+		expect(state.sent).toEqual([]);
+	});
+
 	it("keeps the draft and sent prompts across a session reset", () => {
 		const attachment: Attachment = { id: "a1", kind: "file", label: "a.ts", path: "a.ts", content: "x" };
 		const { state } = replay([

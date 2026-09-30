@@ -15,7 +15,7 @@ export interface PiRuntime {
 /** Oldest Node.js that the bundled pi supports (pi's `engines.node`). */
 const MIN_NODE = [22, 19] as const;
 
-/** Development (Extension Development Host): pi from this repository's source, through tsx. */
+/** Development (Extension Development Host): pi from this repository's source, run by Node with pi's source resolver. */
 export function devRuntime(extensionPath: string): PiRuntime {
 	return {
 		command: "node",

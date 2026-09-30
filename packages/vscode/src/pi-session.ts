@@ -162,12 +162,16 @@ export class PiSession {
 	async submit(text: string): Promise<void> {
 		const attachments = this.state.draft;
 		const prompt = buildPrompt(text, attachments);
-		if (!prompt) return;
+		const images = attachments.flatMap((attachment) =>
+			attachment.image ? [{ type: "image" as const, ...attachment.image }] : [],
+		);
+		if (!prompt && images.length === 0) return;
 		if (attachments.length > 0) this.dispatch({ type: "prompt_sent", prompt, text, attachments });
 		const client = await this.start();
+		const sendImages = images.length > 0 ? images : undefined;
 		// A new prompt while idle, a steering message while pi is working.
-		if (this.status === "working") await client.steer(prompt);
-		else await client.prompt(prompt);
+		if (this.status === "working") await client.steer(prompt, sendImages);
+		else await client.prompt(prompt, sendImages);
 		this.dispatch({ type: "draft_remove", ids: attachments.map((attachment) => attachment.id) });
 	}
 

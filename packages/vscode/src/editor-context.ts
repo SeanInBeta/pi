@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
-import type { Attachment } from "./chat-types.ts";
+import type { Attachment, PastedImage } from "./chat-types.ts";
 import { formatProblems, type Problem } from "./prompt-context.ts";
 
 /** Larger files are attached by path only; pi can read them with its own tools. */
@@ -31,6 +31,18 @@ export function selectionAttachments(editor: vscode.TextEditor): Attachment[] {
 				note: document.isDirty ? "unsaved changes" : undefined,
 			};
 		});
+}
+
+/** An image pasted into the composer, sent to pi as image content. */
+export function imageAttachment(image: PastedImage & { name: string }): Attachment {
+	return {
+		id: randomUUID(),
+		kind: "image",
+		label: image.name,
+		path: image.name,
+		content: "",
+		image: { data: image.data, mimeType: image.mimeType },
+	};
 }
 
 /** The document's current text, including unsaved edits. */

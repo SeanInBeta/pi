@@ -14,6 +14,9 @@ export interface MenuOptions {
 	placeholder?: string;
 	emptyText?: string;
 	onClose?: () => void;
+	/** Items that get a trash button, and what it does. The menu stays open. */
+	deletable?: (item: MenuItem) => boolean;
+	onDelete?: (item: MenuItem) => void;
 }
 
 /**
@@ -147,6 +150,21 @@ export class Menu {
 		const head = text("div", "menu-item-head", "");
 		head.append(text("span", "menu-check", item.current ? "✓" : ""), text("span", "menu-label", item.label));
 		if (item.description) head.append(text("span", "menu-description", item.description));
+		const onDelete = this.options?.onDelete;
+		if (onDelete && this.options?.deletable?.(item)) {
+			const remove = document.createElement("button");
+			remove.type = "button";
+			remove.className = "menu-delete";
+			remove.title = "Delete session";
+			remove.append(trashIcon());
+			remove.addEventListener("mousedown", (event) => {
+				// Handled here, so the row does not open the item.
+				event.preventDefault();
+				event.stopPropagation();
+				onDelete(item);
+			});
+			head.append(remove);
+		}
 		row.append(head);
 		if (item.detail) row.append(text("div", "menu-detail", item.detail));
 		row.addEventListener("mouseenter", () => {
@@ -184,6 +202,17 @@ export class Menu {
 	private countVisible(sections: MenuSection[]): number {
 		return sections.reduce((sum, section) => sum + section.items.filter((item) => this.matches(item)).length, 0);
 	}
+}
+
+export function trashIcon(): SVGSVGElement {
+	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+	svg.setAttribute("class", "icon small");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("aria-hidden", "true");
+	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+	path.setAttribute("d", "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4");
+	svg.append(path);
+	return svg;
 }
 
 function text(tag: string, className: string, content: string): HTMLElement {

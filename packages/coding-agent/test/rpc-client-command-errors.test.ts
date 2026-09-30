@@ -27,6 +27,6 @@ describe("RpcClient command errors", () => {
 			success: true,
 		});
 
-		await expect(client.prompt("hello")).resolves.toBeUndefined();
+		await expect(client.abort()).resolves.toBeUndefined();
 	});
 });

@@ -51,10 +51,10 @@ If you already use pi in a terminal, your existing logins and settings are picke
 ## Using pi
 
 - Type a message and press **Enter** (Shift+Enter for a new line). While pi works, the send button becomes a stop button (or press Esc); typing a message while pi works steers it.
-- **Attach context** with the `+` button, the editor's right-click menu (**Add Selection / File / Problems to Pi Chat**), or `@file`.
+- **Attach context** with the `+` button, the editor's right-click menu (**Add Selection / File / Problems to Pi Chat**), or `@file`. Paste a screenshot or an image file into the input to attach it (models without image input cannot read it).
 - **Review changes**: an edit opens a diff; click **Accept** or **Reject** under the tool call in the chat, or use the check and close buttons in the diff editor. Switch between "Ask for approval" and "Auto edit" in the composer.
 - **Model and thinking level**: click the model name at the bottom right.
-- **Tabs and sessions**: `+` opens a tab. Click the active tab (or right-click any tab) for New session, Rename, Fork, Close and Delete, and to reopen recent sessions.
+- **Tabs and sessions**: `+` opens a tab. Click the active tab (or right-click any tab) for New session, Rename, Fork, Close and Delete, and to reopen recent sessions. The trash icon on a recent session deletes it (the file goes to the trash after you confirm).
 
 Useful commands in the chat:
 
@@ -78,6 +78,7 @@ Click the gear in the panel header (or run **Pi: Settings**):
 - **Choose model**.
 - **Extension settings**: the VS Code settings below.
 - **pi settings file** and **Custom models**: pi's `settings.json` and `models.json`. Custom models start from an Ollama example; see pi's [model guide](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md). Saving either file reloads pi.
+- **MCP servers**: pi's `mcp.json`, created with a disabled example server. Tools of enabled servers become available to the model; see pi's [MCP guide](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md). Saving the file reloads pi.
 
 | VS Code setting | Default | Description |
 |---|---|---|
@@ -95,6 +96,7 @@ The extension runs the pi included in it, but shares its configuration folder wi
 | `auth.json` | Logins and API keys. Keep it private. |
 | `settings.json` | Default model and other pi settings |
 | `models.json` | Custom providers and models |
+| `mcp.json` | MCP servers |
 | `sessions/` | Saved conversations |
 
 Your messages, attached context and the files pi reads go to the model provider you choose. The extension itself collects no telemetry. The included pi behaves as in the terminal: it downloads model catalog updates from pi.dev and adds attribution headers to some provider requests; set `"enableInstallTelemetry": false` in `settings.json` to turn off the headers.

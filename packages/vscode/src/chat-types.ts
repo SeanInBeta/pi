@@ -23,10 +23,10 @@ export interface PendingReview {
 	label: string;
 }
 
-/** Editor context attached to a message. `content` is exactly what the prompt includes. */
+/** Editor context or a pasted image attached to a message. `content` is exactly what the prompt includes. */
 export interface Attachment {
 	id: string;
-	kind: "selection" | "file" | "diagnostics";
+	kind: "selection" | "file" | "diagnostics" | "image";
 	/** Short chip label, for example `src/a.ts:10-20`. */
 	label: string;
 	/** Workspace-relative path, or absolute for files outside the workspace. */
@@ -38,6 +38,14 @@ export interface Attachment {
 	content: string;
 	/** Caveat shown to the user and the model, for example unsaved changes. */
 	note?: string;
+	/** A pasted image, sent to pi as image content instead of prompt text. */
+	image?: PastedImage;
+}
+
+/** Base64 image data without the `data:` prefix. */
+export interface PastedImage {
+	data: string;
+	mimeType: string;
 }
 
 /** A prompt sent with attachments, remembered until pi echoes it back as a user message. */
@@ -95,6 +103,8 @@ export type PanelCommand =
 	| "newTab"
 	| "closeTab"
 	| "deleteSession"
+	/** Delete a saved session from the recent sessions list; `arg`: its file path. */
+	| "deleteSavedSession"
 	| "switchTab"
 	| "setApprovalMode"
 	| "newSession"
@@ -122,6 +132,7 @@ export type PanelCommand =
 	| "openSettings"
 	| "openPiSettings"
 	| "openModelsFile"
+	| "openMcpFile"
 	| "showLog";
 
 /** A provider in the providers menu; the menu item's value is this object as JSON. */
@@ -217,6 +228,8 @@ export type WebviewMessage =
 	| { type: "send"; text: string }
 	| { type: "abort" }
 	| { type: "removeAttachment"; id: string }
+	/** Images pasted into the composer, added to the draft. */
+	| { type: "pasteImages"; images: (PastedImage & { name: string })[] }
 	| { type: "query"; id: number; query: MenuQuery; text?: string }
 	| { type: "command"; command: PanelCommand; arg?: string }
 	| { type: "copyText"; text: string }

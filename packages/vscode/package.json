@@ -2,7 +2,7 @@
 	"name": "pi-vscode-plugin",
 	"displayName": "Pi",
 	"description": "Chat with the pi coding agent in VS Code: streaming answers, editor context, sessions, and reviewed file changes.",
-	"version": "0.87.1",
+	"version": "0.99.1",
 	"publisher": "seaninbeta",
 	"license": "MIT",
 	"repository": {
@@ -239,6 +239,6 @@
 		"@types/vscode": "1.100.0",
 		"marked": "18.0.11",
 		"shx": "0.4.0",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	}
 }

@@ -15,7 +15,7 @@ import type {
 	SetupState,
 } from "./chat-types.ts";
 import { ChatViewProvider } from "./chat-view.ts";
-import { diagnosticsAttachment, fileAttachment, selectionAttachments } from "./editor-context.ts";
+import { diagnosticsAttachment, fileAttachment, imageAttachment, selectionAttachments } from "./editor-context.ts";
 import { ExtensionUIBridge, type UITarget } from "./extension-ui.ts";
 import { ACCEPT, REJECT } from "./file-change.ts";
 import { bundledRuntime, devRuntime, type PiRuntime } from "./pi-launch.ts";
@@ -61,6 +61,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 			submit: (text) => this.run(() => this.withActive((session) => session.serial(() => session.submit(text)))),
 			abort: () => this.run(() => this.active.abort()),
 			removeAttachment: (id) => this.active.dispatch({ type: "draft_remove", ids: [id] }),
+			pasteImages: (images) => void this.attach(images.map(imageAttachment)),
 			query: async (query, text) => {
 				try {
 					return await this.query(query, text);
@@ -218,7 +219,31 @@ class PiController implements vscode.Disposable, PiSessionHost {
 		);
 		if (choice !== "Delete") return;
 		await this.closeTab(session.id);
+		if (file) await this.trashSessionFile(file);
+	}
+
+	/**
+	 * Delete a session from the recent sessions list (`arg`: `{"file","title"}` JSON); an open one also
+	 * closes its tab. The sessions menu reopens afterwards with the updated list.
+	 */
+	async deleteSavedSession(arg: string | undefined): Promise<void> {
+		const { file, title } = JSON.parse(arg ?? "{}") as { file?: string; title?: string };
 		if (!file) return;
+		try {
+			const open = this.sessions.find((session) => session.info.sessionFile === file);
+			if (open) return await this.deleteSession(open.id);
+			const choice = await vscode.window.showWarningMessage(
+				`Delete the session "${title ?? basename(file)}"?`,
+				{ modal: true, detail: `The session file is moved to the trash:\n${file}` },
+				"Delete",
+			);
+			if (choice === "Delete") await this.trashSessionFile(file);
+		} finally {
+			this.chat.openMenu("sessions");
+		}
+	}
+
+	private async trashSessionFile(file: string): Promise<void> {
 		const uri = vscode.Uri.file(file);
 		try {
 			await vscode.workspace.fs.delete(uri, { useTrash: true });
@@ -309,6 +334,8 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				return this.closeTab(arg);
 			case "deleteSession":
 				return this.deleteSession(arg);
+			case "deleteSavedSession":
+				return this.deleteSavedSession(arg);
 			case "switchTab":
 				return this.switchTab(arg);
 			case "openSession":
@@ -344,6 +371,8 @@ class PiController implements vscode.Disposable, PiSessionHost {
 				return this.openAgentFile("settings.json", "{}\n");
 			case "openModelsFile":
 				return this.openAgentFile("models.json", MODELS_TEMPLATE);
+			case "openMcpFile":
+				return this.openAgentFile("mcp.json", MCP_TEMPLATE);
 			case "showLog":
 				return this.showLog();
 			default:
@@ -435,7 +464,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 	}
 
 	/**
-	 * pi reads settings.json, models.json and auth.json when it starts. After one is saved, idle tabs restart
+	 * pi reads settings.json, models.json, mcp.json and auth.json when it starts. After one is saved, idle tabs restart
 	 * (the shown one right away, others when next shown) so the model menu reflects the change.
 	 */
 	private async agentFileSaved(document: vscode.TextDocument): Promise<void> {
@@ -633,7 +662,7 @@ class PiController implements vscode.Disposable, PiSessionHost {
 }
 
 /** pi's configuration files whose changes need a pi restart. */
-const AGENT_FILES = new Set(["settings.json", "models.json", "auth.json"]);
+const AGENT_FILES = new Set(["settings.json", "models.json", "mcp.json", "auth.json"]);
 
 /** Starting point for custom providers and models; see pi's docs/models.md. */
 const MODELS_TEMPLATE = `{
@@ -643,6 +672,18 @@ const MODELS_TEMPLATE = `{
 			"api": "openai-completions",
 			"apiKey": "ollama",
 			"models": [{ "id": "qwen2.5-coder:7b" }]
+		}
+	}
+}
+`;
+
+/** Starting point for MCP servers; see pi's docs/mcp.md. Disabled until the user edits it. */
+const MCP_TEMPLATE = `{
+	"mcpServers": {
+		"filesystem": {
+			"command": "npx",
+			"args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+			"enabled": false
 		}
 	}
 }

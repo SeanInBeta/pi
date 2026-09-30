@@ -154,8 +154,18 @@ function startMessage(state: ChatState, message: AgentMessage): ChatState {
 			typeof message.content === "string"
 				? message.content
 				: message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n");
+		// Pasted images come back as image parts after the prompt text.
+		const promptText =
+			typeof message.content === "string"
+				? message.content
+				: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 		// A prompt built with attachments comes back as one text; show the typed text and the attachments instead.
-		const sentIndex = state.sent.findIndex((sent) => sent.prompt === text);
+		// pi appends notes about images it resized or omitted after a blank line.
+		const sentIndex = state.sent.findIndex(
+			(sent) =>
+				sent.prompt === promptText ||
+				(sent.attachments.some((attachment) => attachment.image) && promptText.startsWith(`${sent.prompt}\n\n`)),
+		);
 		if (sentIndex === -1) return appendItem(state, { kind: "user", text });
 		const sent = state.sent[sentIndex]!;
 		return appendItem(

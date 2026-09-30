@@ -29,6 +29,9 @@ export function formatAttachment(attachment: Attachment): string {
 			return `File ${attachment.path}${note}:\n${fence(attachment.content, attachment.language)}`;
 		case "diagnostics":
 			return `Problems reported by VS Code in ${attachment.path}${note}:\n${attachment.content}`;
+		case "image":
+			// Sent as image content, not as prompt text.
+			return "";
 	}
 }
 

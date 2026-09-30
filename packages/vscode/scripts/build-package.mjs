@@ -28,8 +28,11 @@ const piDir = join(distDir, "pi");
 const bundleDir = join(piDir, "dist", "bundle");
 const rootTsconfig = join(repoRoot, "tsconfig.json");
 
-/** Packages the pi bundle loads at runtime instead of bundling; copied into dist/pi/node_modules. */
-const RUNTIME_PACKAGES = ["jiti", "@silvia-odwyer/photon-node"];
+/**
+ * Packages the pi bundle loads at runtime instead of bundling; copied into dist/pi/node_modules.
+ * quickjs-wasi carries the wasm VM that runs codemode scripts, resolved with require.resolve().
+ */
+const RUNTIME_PACKAGES = ["jiti", "@silvia-odwyer/photon-node", "quickjs-wasi"];
 /** Optional native accelerators whose callers fall back when they are missing. */
 const OPTIONAL_EXTERNALS = ["bufferutil", "utf-8-validate", "kerberos", "supports-color"];
 
@@ -180,16 +183,20 @@ async function buildPi() {
 		outdir: bundleDir,
 		splitting: true,
 	});
-	// OAuth flows, Bedrock and the image worker are loaded through variable specifiers or a worker URL,
-	// so each gets a self-contained file next to the code that resolves it.
+	// OAuth flows, Bedrock and the image and codemode workers are loaded through variable specifiers or a
+	// worker URL, so each gets a self-contained file next to the code that resolves it.
 	const loaderDir = dirname(findOutputContaining(main.metafile, "packages/ai/src/auth/oauth/load.ts"));
-	const oauth = ["anthropic", "github-copilot", "kimi-coding", "meta", "openai-codex", "openrouter", "radius", "xai"];
+	// Every flow that importOAuthModule() loads, so a new upstream flow cannot be missed.
+	const oauthLoader = readFileSync(join(aiSrc, "auth", "oauth", "load.ts"), "utf8");
+	const oauth = [...oauthLoader.matchAll(/importOAuthModule\("\.\/([^"]+)\.ts"\)/g)].map((match) => match[1]);
+	if (oauth.length === 0) throw new Error("No OAuth flows found in packages/ai/src/auth/oauth/load.ts");
 	const lazy = await build({
 		...piBuildOptions(),
 		entryPoints: {
 			...Object.fromEntries(oauth.map((name) => [name, join(aiSrc, "auth", "oauth", `${name}.ts`)])),
 			"bedrock-converse-stream": join(aiSrc, "api", "bedrock-converse-stream.ts"),
 			"image-resize-worker": join(codingAgentDir, "src", "utils", "image-resize-worker.ts"),
+			"codemode-worker": join(codingAgentDir, "src", "extensions", "codemode", "worker.ts"),
 		},
 		entryNames: "[name]",
 		outdir: loaderDir,
@@ -198,6 +205,8 @@ async function buildPi() {
 	for (const [input, name] of [
 		["packages/ai/src/api/bedrock-converse-stream.lazy.ts", "bedrock-converse-stream.js"],
 		["packages/coding-agent/src/utils/image-resize.ts", "image-resize-worker.js"],
+		// getCodemodeWorkerUrl() in config.ts resolves the worker next to its own chunk.
+		["packages/coding-agent/src/config.ts", "codemode-worker.js"],
 	]) {
 		const expected = join(dirname(findOutputContaining(main.metafile, input)), name);
 		if (!existsSync(expected)) throw new Error(`${relative(repoRoot, expected)} is missing next to its loader`);
