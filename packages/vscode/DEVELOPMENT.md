@@ -250,7 +250,7 @@ The installed extension (VS Code's production mode) runs `dist/pi` with `PI_PACK
 2. `npm install --ignore-scripts` and `npm run hydrate:model-data` (needs network access to models.dev).
 3. `npm run check` and `./test.sh`, plus the extension tests (`cd packages/vscode && node ../../node_modules/vitest/dist/cli.js --run`).
 4. `npm --prefix packages/vscode run package`, install the VSIX in a clean VS Code profile (`code --profile Test --install-extension ...`), and check the first-run card, a sign-in, a chat, and an edit review.
-5. Tag the commit and push the tag (`git tag vscode-v<version> && git push origin vscode-v<version>`), then create a GitHub Release from the tag and attach the VSIX.
+5. Tag the commit and push the tag (`git tag vscode-v<version> && git push origin vscode-v<version>`), then publish a GitHub Release from the tag. The `VS Code Extension Release` workflow (`.github/workflows/vscode-release.yml`) packages the VSIX and attaches it to the release; it fails if the tag does not match `packages/vscode/package.json`. To add or replace the VSIX of an existing release, run the workflow manually from the Actions tab with the tag.
 
 ## Known limitations
 

@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build (e.g., vscode-v0.87.1)'
+        description: 'Release tag to build (e.g., vscode-v0.99.1)'
         required: true
         type: string
 
