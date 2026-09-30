@@ -1,0 +1,68 @@
+name: VS Code Extension Release
+
+# Builds the self-contained VSIX and attaches it to the GitHub Release of a vscode-v<version> tag.
+# Runs when such a release is published, or manually for an existing tag (to add or replace the VSIX).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g., vscode-v0.99.1)'
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: vscode-release-${{ github.event.inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'vscode-v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check tag matches extension version
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p 'require("./packages/vscode/package.json").version')"
+          if [[ "${RELEASE_TAG}" != "vscode-v${VERSION}" ]]; then
+            echo "::error::Tag ${RELEASE_TAG} does not match packages/vscode/package.json version ${VERSION} (expected vscode-v${VERSION})."
+            exit 1
+          fi
+          echo "VSIX=packages/vscode/pi-vscode-plugin-${VERSION}.vsix" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Hydrate model data
+        run: npm run hydrate:model-data
+
+      - name: Package VSIX
+        run: npm --prefix packages/vscode run package
+
+      - name: Upload VSIX to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -f "${VSIX}"
+          gh release upload "${RELEASE_TAG}" "${VSIX}" --clobber --repo "${GITHUB_REPOSITORY}"
